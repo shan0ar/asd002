@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['client_name'])) {
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>ASD - Gestion des clients</title>
+    <title>OSINT - Gestion des clients</title>
     <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
