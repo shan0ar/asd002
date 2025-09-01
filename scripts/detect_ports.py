@@ -20,6 +20,7 @@ def parse_nmap_output(output):
     parsing_ports = False
     results = []
 
+    # Find the domain and IP
     for i, line in enumerate(lines):
         m = re.match(r"Nmap scan report for ([^\s]+) \(([\d\.]+)\)", line)
         if m:
@@ -30,11 +31,13 @@ def parse_nmap_output(output):
             if m:
                 domain_ip = m.group(1)
 
+        # Detect PORT header
         if line.startswith("PORT"):
             parsing_ports = True
             port_line_idx = i
             continue
 
+        # Parse ports
         if parsing_ports:
             if line.strip() == "" or line.startswith("Service detection"):
                 break
