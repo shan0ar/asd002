@@ -1,4 +1,7 @@
 <?php
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 require_once 'includes/db.php';
 $db = getDb();
 
@@ -11,6 +14,95 @@ if (!$client) die("Client introuvable");
 $schedule = $db->prepare("SELECT * FROM scan_schedules WHERE client_id=?");
 $schedule->execute([$id]);
 $schedule = $schedule->fetch(PDO::FETCH_ASSOC);
+
+// 1. Assets découverts
+$stmt = $db->prepare("SELECT DISTINCT LOWER(asset) AS asset FROM assets_discovered WHERE client_id=?");
+$stmt->execute([$id]);
+$assets_discovered = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+// 2. Assets de base
+$stmt = $db->prepare("SELECT DISTINCT LOWER(asset_value) AS asset FROM client_assets WHERE client_id=?");
+$stmt->execute([$id]);
+$assets_base = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+// 3. Fusion des assets pour affichage dans la matrice outils/assets
+$assets = array_unique(array_merge($assets_discovered, $assets_base));
+sort($assets);
+
+// Liste des outils
+$scan_tools = [
+    'whois' => 'Whois',
+    'amass' => 'Amass',
+    'dig_bruteforce' => 'DIG_Bruteforce',
+    'dig_mx' => 'DIG_MX',
+    'dig_txt' => 'DIG_TXT',
+    'dig_a' => 'DIG_A',
+    'whatweb' => 'Whatweb/Nuclei',
+    'nmap' => 'Nmap'
+];
+
+// $scan_id, $client_id connus ici
+// $asset_sources est un tableau associatif asset => array(source1, source2, ...)
+// par exemple: $asset_sources['foo.example.com'] = ['Amass', 'DIG_A']
+$asset_sources = $asset_sources ?? [];
+foreach ($asset_sources as $asset => $sources) {
+    $source_str = implode(' & ', $sources);
+    // Vérifie déjà présent pour ce scan+asset
+    $check = $db->prepare("SELECT id FROM assets_discovered WHERE scan_id=? AND asset=?");
+    $check->execute([$scan_id, $asset]);
+    if (!$check->fetch()) {
+        $ins = $db->prepare("INSERT INTO assets_discovered (scan_id, detected_at, client_id, asset, source) VALUES (?, now(), ?, ?, ?)");
+        $ins->execute([$scan_id, $client_id, $asset, $source_str]);
+    }
+}
+// Enregistrement paramètres assets/outils
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_asset_tools'])) {
+    $asset_params = $_POST['asset_tools'] ?? [];
+    foreach ($asset_params as $asset => $tools) {
+        foreach ($scan_tools as $tool_key => $tool_label) {
+            $enabled = isset($tools[$tool_key]) ? 1 : 0;
+            $db->prepare("
+                INSERT INTO asset_scan_settings (client_id, asset, tool, enabled)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (client_id, asset, tool) DO UPDATE SET enabled=excluded.enabled
+            ")->execute([$id, $asset, $tool_key, $enabled]);
+        }
+    }
+    echo "<div style='color:green;font-weight:bold;margin:12px 0'>Paramètres d’assets enregistrés !</div>";
+}
+
+// Lecture des paramètres enregistrés
+$stmt = $db->prepare("SELECT asset, tool, enabled FROM asset_scan_settings WHERE client_id=?");
+$stmt->execute([$id]);
+$settings = [];
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $settings[$row['asset']][$row['tool']] = $row['enabled'];
+}
+
+// ======= GESTION NB TENTATIVES BRUTEFORCE =======
+$brute_count = 50; // valeur par défaut
+$info_stmt = $db->prepare("SELECT brute_count FROM information WHERE client_id=?");
+$info_stmt->execute([$id]);
+if ($info_row = $info_stmt->fetch(PDO::FETCH_ASSOC)) {
+    $brute_count = intval($info_row['brute_count']);
+}
+
+// Enregistrement du nombre de tentatives bruteforce
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['brute_count'])) {
+    $new_brute_count = max(1, intval($_POST['brute_count']));
+    // Insert/update
+    $exists = $db->prepare("SELECT id FROM information WHERE client_id=?");
+    $exists->execute([$id]);
+    if ($exists->fetch()) {
+        $upd = $db->prepare("UPDATE information SET brute_count=?, updated_at=now() WHERE client_id=?");
+        $upd->execute([$new_brute_count, $id]);
+    } else {
+        $ins = $db->prepare("INSERT INTO information (client_id, brute_count) VALUES (?, ?)");
+        $ins->execute([$id, $new_brute_count]);
+    }
+    $brute_count = $new_brute_count;
+    echo "<div style='color:green;font-weight:bold'>Nombre de tentatives bruteforce enregistré : $brute_count</div>";
+}
 
 // Enregistrement de la planification personnalisée
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['frequency'])) {
@@ -31,20 +123,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['frequency'])) {
     exit;
 }
 
-// Lancer un scan immédiat
+// Lancer un scan immédiat (corrigé pour prendre en compte les outils cochés)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'scan_now') {
     $stmt = $db->prepare("INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, now(), false, 'running') RETURNING id");
     $stmt->execute([$id]);
     $scan_id = $stmt->fetchColumn();
 
-    $assets = $db->prepare("SELECT asset_value FROM client_assets WHERE client_id=?");
-    $assets->execute([$id]);
-    $assets = $assets->fetchAll(PDO::FETCH_COLUMN);
+    // 1. Liste des assets pour lesquels au moins un outil est coché
+    $assets_stmt = $db->prepare("SELECT DISTINCT asset FROM asset_scan_settings WHERE client_id=? AND enabled=true");
+    $assets_stmt->execute([$id]);
+    $assets = $assets_stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    // 2. Liste des outils cochés pour chaque asset
+    $settings_stmt = $db->prepare("SELECT asset, tool FROM asset_scan_settings WHERE client_id=? AND enabled=true");
+    $settings_stmt->execute([$id]);
+    $enabled_tools = [];
+    foreach ($settings_stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $enabled_tools[$row['asset']][] = $row['tool'];
+    }
 
     foreach ($assets as $asset) {
-        $cmd = sprintf('bash /var/www/html/asd002/scripts/scan_launcher.sh %s %d', escapeshellarg($asset), $scan_id);
-        file_put_contents('/opt/asd002-logs/php_exec.log', date('c')." CMD: $cmd\n", FILE_APPEND);
-        exec($cmd . ' > /opt/asd002-logs/php_exec.log 2>&1', $output, $ret);
+        $asset_tools = $enabled_tools[$asset] ?? [];
+        foreach ($asset_tools as $tool) {
+            $cmd = sprintf('bash /var/www/html/asd002/scripts/scan_%s.sh %s %d', $tool, escapeshellarg($asset), $scan_id);
+            file_put_contents('/opt/asd002-logs/php_exec.log', date('c')." CMD: $cmd\n", FILE_APPEND);
+            exec($cmd . ' >> /opt/asd002-logs/php_exec.log 2>&1');
+        }
     }
 
     header("Location: client.php?id=$id&just_launched=$scan_id");
@@ -56,7 +160,6 @@ $scans = $db->prepare("SELECT id, scan_date, status FROM scans WHERE client_id=?
 $scans->execute([$id]);
 $scans = $scans->fetchAll(PDO::FETCH_ASSOC);
 
-// DEBUG: Affiche tous les scans de ce client
 echo "<pre style='background:#ffe;border:1px solid #ccc;padding:6px'>DEBUG scans<br>";
 foreach ($scans as $s) echo "scan_id={$s['id']} scan_date={$s['scan_date']} status={$s['status']}\n";
 echo "</pre>";
@@ -117,6 +220,10 @@ $date_now = date('Y-m-d H:i:s');
     ul.wwtech { margin:0; padding-left:20px;}
     ul.wwtech li { margin-bottom:2px;}
     pre.raw-dig { background: #f6f8fa; border: 1px solid #ccc; padding: 8px; font-size: 0.95em; max-height: 320px; overflow:auto;}
+    .asset-settings-frame { background:#eef;border:1px solid #88a;padding:15px 25px;margin:2em 0 2em 0;max-width:1100px;}
+    .asset-settings-frame h2 {margin-top:0}
+    .asset-settings-frame td, .asset-settings-frame th {text-align:center;}
+    .asset-settings-frame button {margin-top:12px;}
     </style>
     <script>
     function toggleRaw(id) {
@@ -188,6 +295,40 @@ $date_now = date('Y-m-d H:i:s');
         </tr>
     </table>
 
+    <!-- === Cadre assets/outils ON/OFF === -->
+    <div class="asset-settings-frame">
+        <h2>Paramètres assets & outils pour le prochain scan</h2>
+        <form method="post" style="margin:0">
+            <input type="hidden" name="save_asset_tools" value="1">
+            <table class="data" style="min-width:700px">
+                <tr>
+                    <th>Asset</th>
+                    <?php foreach($scan_tools as $tool_key => $tool_label): ?>
+                        <th><?=$tool_label?></th>
+                    <?php endforeach ?>
+                </tr>
+                <?php foreach($assets as $asset): ?>
+                <tr>
+                    <td><?=htmlspecialchars($asset)?></td>
+                    <?php foreach($scan_tools as $tool_key => $tool_label): ?>
+                        <td>
+                            <input type="checkbox"
+                                   name="asset_tools[<?=htmlspecialchars($asset)?>][<?=$tool_key?>]"
+                                   value="1"
+                                   id="<?=md5($asset.$tool_key)?>"
+                                   <?= (isset($settings[$asset][$tool_key]) && $settings[$asset][$tool_key]) ? 'checked' : ''?>>
+                            <label for="<?=md5($asset.$tool_key)?>"></label>
+                        </td>
+                    <?php endforeach ?>
+                </tr>
+                <?php endforeach ?>
+            </table>
+            <button type="submit">Enregistrer ces paramètres</button>
+        </form>
+        <div style="font-size:0.93em;color:#888;margin-top:8px;">Chaque outil sera utilisé ou non pour chaque asset au prochain scan, selon vos choix ici.</div>
+    </div>
+    <!-- === Fin cadre assets/outils ON/OFF === -->
+
     <h2>Planification des scans</h2>
     <form method="post">
         <label>Fréquence des scans :
@@ -205,6 +346,13 @@ $date_now = date('Y-m-d H:i:s');
         <label>Heure personnalisée : <input type="time" name="custom_time"></label>
         <button type="submit">Enregistrer</button>
     </form>
+
+    <form method="post" style="margin:1em 0;">
+        <label for="brute_count"><b>Nombre de tentatives bruteforce (lignes de la wordlist à tester)</b> :</label>
+        <input type="number" min="1" max="10000" name="brute_count" id="brute_count" value="<?=htmlspecialchars($brute_count)?>" required>
+        <input type="submit" value="Enregistrer">
+    </form>
+
     <form method="post" action="custom_scan.php">
         <input type="hidden" name="client_id" value="<?=$id?>">
         <button type="submit">Personnaliser le prochain scan</button>
@@ -217,18 +365,15 @@ $date_now = date('Y-m-d H:i:s');
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
     $day = isset($_GET['day']) ? intval($_GET['day']) : null;
 
-    // Affichage automatique des résultats du scan tout juste lancé
     if ($just_launched && !$day) {
-        // Récupère la date du scan_id
         $stmt = $db->prepare("SELECT scan_date FROM scans WHERE id=?");
         $stmt->execute([$just_launched]);
         $scan_date = $stmt->fetchColumn();
-        $scan_day = substr($scan_date, 8, 2); // ex: "2025-08-22 11:05:44.458036" -> "22"
+        $scan_day = substr($scan_date, 8, 2);
         echo "<script>window.location = 'client.php?id=$id&year=$year&month=$month&day=$scan_day&auto_poll=1&scan_id=$just_launched';</script>";
         exit;
     }
 
-    // Poll AJAX si on vient de lancer un scan
     if (isset($_GET['auto_poll']) && isset($_GET['scan_id'])) {
         $poll_scan_id = intval($_GET['scan_id']);
         echo "<script>pollScanStatus($poll_scan_id);</script>";
@@ -249,6 +394,208 @@ $date_now = date('Y-m-d H:i:s');
             if ($scan_status == 'running') echo "<div class='scan-status running'>Scan en cours…</div>";
             elseif ($scan_status == 'pending') echo "<div class='scan-status pending'>Scan planifié pour " . htmlspecialchars($scan_date) . "</div>";
             elseif ($scan_status == 'done') echo "<div class='scan-status done'>Scan terminé le " . htmlspecialchars($scan_date) . "</div>";
+
+            $nmap_stmt = $db->prepare("SELECT asset, port, state, service, version FROM nmap_results WHERE scan_id=? ORDER BY asset, port ASC");
+$nmap_stmt->execute([$scan_id]);
+$nmap_results = $nmap_stmt->fetchAll(PDO::FETCH_ASSOC);
+if ($nmap_results && count($nmap_results)) {
+    echo "<h3>Résultats Nmap</h3>
+    <table class='data'><tr>
+        <th>Asset</th>
+        <th>Port</th>
+        <th>État</th>
+        <th>Service</th>
+        <th>Version</th>
+    </tr>";
+    foreach ($nmap_results as $row) {
+        echo "<tr>
+            <td>".htmlspecialchars($row['asset'])."</td>
+            <td>".htmlspecialchars($row['port'])."</td>
+            <td>".htmlspecialchars($row['state'])."</td>
+            <td>".htmlspecialchars($row['service'])."</td>
+            <td>".htmlspecialchars($row['version'])."</td>
+        </tr>";
+    }
+    echo "</table>";
+            } else {
+                echo "<div style='color:#888;'>Aucun résultat Nmap pour ce scan.</div>";
+            }
+
+            $stmt = $db->prepare("SELECT asset, source FROM assets_discovered WHERE scan_id=?");
+            $stmt->execute([$scan_id]);
+            $assets_discovered = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            if ($assets_discovered && count($assets_discovered)) {
+                $asset_sources = [];
+                foreach ($assets_discovered as $a) {
+                    $dom = strtolower(trim($a['asset']));
+                    $srcs = array_map('trim', explode('&', str_replace(' & ', '&', $a['source'])));
+                    if (!isset($asset_sources[$dom])) $asset_sources[$dom] = [];
+                    foreach ($srcs as $src)
+                        if ($src && !in_array($src, $asset_sources[$dom])) $asset_sources[$dom][] = $src;
+                }
+                echo "<h3>Domaines/sous-domaines détectés (tous outils confondus, sans doublon):</h3><pre style='background:#eef;border:1px solid #ccc;padding:7px'>";
+                foreach ($asset_sources as $dom => $srcs) {
+                    echo htmlspecialchars($dom) . " [" . htmlspecialchars(implode(' & ', $srcs)) . "]\n";
+                }
+                echo "</pre>";
+            }
+
+            $whatweb = $db->prepare("SELECT * FROM whatweb WHERE scan_id=?");
+            $whatweb->execute([$scan_id]);
+            $whatweb_rows = $whatweb->fetchAll(PDO::FETCH_ASSOC);
+            if ($whatweb_rows && count($whatweb_rows)) {
+                echo "<h3>WhatWeb</h3>";
+                echo "<table class='data'><tr>
+                        <th>IP/Domaine</th>
+                        <th>Technologie</th>
+                        <th>Valeur</th>
+                        <th>Version</th>
+                      </tr>";
+                foreach ($whatweb_rows as $row) {
+                    echo "<tr>
+                            <td>".htmlspecialchars($row['domain_ip'])."</td>
+                            <td>".htmlspecialchars($row['technologie'])."</td>
+                            <td>".htmlspecialchars($row['valeur'])."</td>
+                            <td>".htmlspecialchars($row['version'])."</td>
+                          </tr>";
+                }
+                echo "</table>";
+            }
+
+            $dig_a = $db->prepare("SELECT * FROM dig_a WHERE scan_id=?");
+            $dig_a->execute([$scan_id]);
+            $dig_a = $dig_a->fetch(PDO::FETCH_ASSOC);
+            if ($dig_a) {
+                echo "<h3>Résultat DIG A</h3>
+                <table class='data'><tr>
+                <th>Domaine</th><th>IP</th><th>TTL</th><th>Raw</th>
+                </tr><tr>
+                <td>{$dig_a['domain']}</td>
+                <td>{$dig_a['ip']}</td>
+                <td>{$dig_a['ttl']}</td>
+                <td><span class='info-icon' onclick=\"toggleRaw('dig-a-{$dig_a['id']}')\">i</span>
+                    <div id='dig-a-{$dig_a['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($dig_a['raw_output'])."</div>
+                </td>
+                </tr></table>";
+            }
+
+            $amass = $db->prepare("SELECT * FROM amass_results WHERE scan_id=? ORDER BY id ASC");
+            $amass->execute([$scan_id]);
+            $amass_rows = $amass->fetchAll(PDO::FETCH_ASSOC);
+            if ($amass_rows && count($amass_rows)) {
+                echo "<h3>Résultats Amass</h3>
+                <table class='data'><tr>
+                    <th>#</th>
+                    <th>Sous-domaine</th>
+                    <th>Type</th>
+                    <th>Valeur</th>
+                    <th>Ligne brute</th>
+                </tr>";
+                $i = 1;
+                foreach ($amass_rows as $row) {
+                    echo "<tr>
+                        <td>{$i}</td>
+                        <td>".htmlspecialchars($row['subdomain'])."</td>
+                        <td>".htmlspecialchars($row['record_type'])."</td>
+                        <td>".htmlspecialchars($row['value'])."</td>
+                        <td><span class='info-icon' onclick=\"toggleRaw('amass-{$row['id']}')\">i</span>
+                            <div id='amass-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($row['raw_output'])."</div>
+                        </td>
+                    </tr>";
+                    $i++;
+                }
+                echo "</table>";
+            }
+
+            $dig_ns = $db->prepare("SELECT * FROM dig_ns WHERE scan_id=?");
+            $dig_ns->execute([$scan_id]);
+            $dig_ns_rows = $dig_ns->fetchAll(PDO::FETCH_ASSOC);
+            if ($dig_ns_rows && count($dig_ns_rows)) {
+                echo "<h3>Résultat DIG NS</h3>
+                <table class='data'><tr>
+                <th>Domaine</th><th>NS</th><th>TTL</th><th>Raw</th>
+                </tr>";
+                foreach ($dig_ns_rows as $row) {
+                    echo "<tr>
+                    <td>{$row['domain']}</td>
+                    <td>{$row['ns']}</td>
+                    <td>{$row['ttl']}</td>
+                    <td><span class='info-icon' onclick=\"toggleRaw('dig-ns-{$row['id']}')\">i</span>
+                      <div id='dig-ns-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($row['raw_output'])."</div>
+                    </td>
+                    </tr>";
+                }
+                echo "</table>";
+            }
+
+            $dig_mx = $db->prepare("SELECT * FROM dig_mx WHERE scan_id=?");
+            $dig_mx->execute([$scan_id]);
+            $dig_mx_rows = $dig_mx->fetchAll(PDO::FETCH_ASSOC);
+            if ($dig_mx_rows && count($dig_mx_rows)) {
+                echo "<h3>Résultat DIG MX</h3>
+                <table class='data'><tr>
+                <th>Domaine</th><th>Préférence</th><th>Exchange</th><th>TTL</th><th>Raw</th>
+                </tr>";
+                foreach ($dig_mx_rows as $row) {
+                    echo "<tr>
+                    <td>{$row['domain']}</td>
+                    <td>{$row['preference']}</td>
+                    <td>{$row['exchange']}</td>
+                    <td>{$row['ttl']}</td>
+                    <td><span class='info-icon' onclick=\"toggleRaw('dig-mx-{$row['id']}')\">i</span>
+                      <div id='dig-mx-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($row['raw_output'])."</div>
+                    </td>
+                    </tr>";
+                }
+                echo "</table>";
+            }
+
+            $dig_txt = $db->prepare("SELECT * FROM dig_txt WHERE scan_id=?");
+            $dig_txt->execute([$scan_id]);
+            $dig_txt_rows = $dig_txt->fetchAll(PDO::FETCH_ASSOC);
+            if ($dig_txt_rows && count($dig_txt_rows)) {
+                echo "<h3>Résultat DIG TXT</h3>
+                <table class='data'><tr>
+                <th>Domaine</th><th>TXT</th><th>TTL</th><th>Raw</th>
+                </tr>";
+                foreach ($dig_txt_rows as $row) {
+                    echo "<tr>
+                    <td>{$row['domain']}</td>
+                    <td>".htmlspecialchars($row['txt'])."</td>
+                    <td>{$row['ttl']}</td>
+                    <td><span class='info-icon' onclick=\"toggleRaw('dig-txt-{$row['id']}')\">i</span>
+                      <div id='dig-txt-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($row['raw_output'])."</div>
+                    </td>
+                    </tr>";
+                }
+                echo "</table>";
+            }
+
+            $stmt = $db->prepare("SELECT bruteforce_attempts FROM scans WHERE id=?");
+            $stmt->execute([$scan_id]);
+            $nb_tentatives = $stmt->fetchColumn();
+            $nb_tentatives_txt = ($nb_tentatives !== null && $nb_tentatives !== false) ? intval($nb_tentatives) : "?";
+            $dig_brute = $db->prepare("SELECT * FROM dig_bruteforce WHERE scan_id=? ORDER BY id ASC");
+            $dig_brute->execute([$scan_id]);
+            $dig_brute_rows = $dig_brute->fetchAll(PDO::FETCH_ASSOC);
+            if ($dig_brute_rows && count($dig_brute_rows)) {
+                echo "<h3>Résultats DIG Bruteforce ($nb_tentatives_txt tentatives)</h3>
+                <table class='data'><tr>
+                <th>Subdomain</th><th>IP</th><th>Raw (premières lignes)</th>
+                </tr>";
+                foreach ($dig_brute_rows as $row) {
+                    $short_raw = implode("\n", array_slice(explode("\n", $row['raw_output']), 0, 20));
+                    echo "<tr>
+                    <td>{$row['subdomain']}</td>
+                    <td>{$row['ip']}</td>
+                    <td>
+                        <span class='info-icon' onclick=\"toggleRaw('dig-bruteforce-{$row['id']}')\">i</span>
+                        <div id='dig-bruteforce-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($short_raw)."</div>
+                    </td>
+                    </tr>";
+                }
+                echo "</table>";
+            }
         } else {
             $sched = $db->prepare("SELECT next_run FROM scan_schedules WHERE client_id=?");
             $sched->execute([$id]);
@@ -264,178 +611,6 @@ $date_now = date('Y-m-d H:i:s');
         if ($next) {
             echo "<div class='scan-status pending'>Prochain scan planifié pour $next</div>";
         }
-    }
-
-    // Affichage tabulaire des résultats structurés pour le scan sélectionné
-    if ($day !== null && $scan && $scan['status'] == 'done') {
-        $scan_id = $scan['id'];
-
-        // DEBUG: Affiche les whatweb du scan_id sélectionné
-        $whatweb = $db->prepare("SELECT * FROM whatweb WHERE scan_id=?");
-        $whatweb->execute([$scan_id]);
-        $whatweb_rows = $whatweb->fetchAll(PDO::FETCH_ASSOC);
-        echo "<pre style='background:#efe;border:1px solid #ccc;padding:5px'>DEBUG whatweb (" . count($whatweb_rows) . " lignes) pour scan_id=$scan_id\n";
-        foreach ($whatweb_rows as $row) {
-            echo "id={$row['id']} domaine={$row['domain_ip']} techno={$row['technologie']} version={$row['version']} valeur={$row['valeur']}\n";
-        }
-        echo "</pre>";
-
-        // WHOIS (reste inchangé)
-        $whois = $db->prepare("SELECT * FROM whois_data WHERE scan_id=?");
-        $whois->execute([$scan_id]);
-        $whois = $whois->fetch(PDO::FETCH_ASSOC);
-        if ($whois) {
-            echo "<h3>WHOIS</h3>";
-            echo "<table class='data'><tr>
-                <th>Domaine</th><th>Registrar</th><th>Création</th><th>Expiration</th>
-                <th>NS1</th><th>NS2</th><th>DNSSEC</th>
-                <th><span class='info-icon' onclick=\"toggleRaw('whois-{$whois['id']}')\">i</span></th>
-            </tr><tr>
-                <td>{$whois['domain']}</td>
-                <td>{$whois['registrar']}</td>
-                <td>{$whois['creation_date']}</td>
-                <td>{$whois['expiry_date']}</td>
-                <td>{$whois['name_server_1']}</td>
-                <td>{$whois['name_server_2']}</td>
-                <td>{$whois['dnssec']}</td>
-                <td>
-                  <span class='info-icon' onclick=\"toggleRaw('whois-{$whois['id']}')\">i</span>
-                  <div id='whois-{$whois['id']}' style='display:none;white-space:pre;font-size:0.9em;border:1px solid #ccc;padding:4px;background:#fafafa;'>{$whois['raw_output']}</div>
-                </td>
-            </tr></table>";
-        }
-
-        // WhatWeb (direct in whatweb table, one row per technology)
-        if ($whatweb_rows && count($whatweb_rows)) {
-            echo "<h3>WhatWeb</h3>";
-            echo "<table class='data'><tr>
-                    <th>IP/Domaine</th>
-                    <th>Technologie</th>
-                    <th>Valeur</th>
-                    <th>Version</th>
-                  </tr>";
-            foreach ($whatweb_rows as $row) {
-                echo "<tr>
-                        <td>".htmlspecialchars($row['domain_ip'])."</td>
-                        <td>".htmlspecialchars($row['technologie'])."</td>
-                        <td>".htmlspecialchars($row['valeur'])."</td>
-                        <td>".htmlspecialchars($row['version'])."</td>
-                      </tr>";
-            }
-            echo "</table>";
-        } else {
-            echo "<div style='color:red;font-weight:bold'>Aucun résultat WhatWeb pour ce scan.</div>";
-        }
-
-        // DIG A
-        $dig_a = $db->prepare("SELECT * FROM dig_a WHERE scan_id=?");
-        $dig_a->execute([$scan_id]);
-        $dig_a = $dig_a->fetch(PDO::FETCH_ASSOC);
-
-        if ($dig_a) {
-            echo "<h3>Résultat DIG A</h3>
-            <table class='data'><tr>
-            <th>Domaine</th><th>IP</th><th>TTL</th><th>Raw</th>
-            </tr><tr>
-            <td>{$dig_a['domain']}</td>
-            <td>{$dig_a['ip']}</td>
-            <td>{$dig_a['ttl']}</td>
-            <td><span class='info-icon' onclick=\"toggleRaw('dig-a-{$dig_a['id']}')\">i</span>
-                <div id='dig-a-{$dig_a['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($dig_a['raw_output'])."</div>
-            </td>
-            </tr></table>";
-        }
-
-        // DIG NS
-        $dig_ns = $db->prepare("SELECT * FROM dig_ns WHERE scan_id=?");
-        $dig_ns->execute([$scan_id]);
-        $dig_ns_rows = $dig_ns->fetchAll(PDO::FETCH_ASSOC);
-        if ($dig_ns_rows && count($dig_ns_rows)) {
-            echo "<h3>Résultat DIG NS</h3>
-            <table class='data'><tr>
-            <th>Domaine</th><th>NS</th><th>TTL</th><th>Raw</th>
-            </tr>";
-            foreach ($dig_ns_rows as $row) {
-                echo "<tr>
-                <td>{$row['domain']}</td>
-                <td>{$row['ns']}</td>
-                <td>{$row['ttl']}</td>
-                <td><span class='info-icon' onclick=\"toggleRaw('dig-ns-{$row['id']}')\">i</span>
-                  <div id='dig-ns-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($row['raw_output'])."</div>
-                </td>
-                </tr>";
-            }
-            echo "</table>";
-        }
-
-        // DIG MX
-        $dig_mx = $db->prepare("SELECT * FROM dig_mx WHERE scan_id=?");
-        $dig_mx->execute([$scan_id]);
-        $dig_mx_rows = $dig_mx->fetchAll(PDO::FETCH_ASSOC);
-        if ($dig_mx_rows && count($dig_mx_rows)) {
-            echo "<h3>Résultat DIG MX</h3>
-            <table class='data'><tr>
-            <th>Domaine</th><th>Préférence</th><th>Exchange</th><th>TTL</th><th>Raw</th>
-            </tr>";
-            foreach ($dig_mx_rows as $row) {
-                echo "<tr>
-                <td>{$row['domain']}</td>
-                <td>{$row['preference']}</td>
-                <td>{$row['exchange']}</td>
-                <td>{$row['ttl']}</td>
-                <td><span class='info-icon' onclick=\"toggleRaw('dig-mx-{$row['id']}')\">i</span>
-                  <div id='dig-mx-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($row['raw_output'])."</div>
-                </td>
-                </tr>";
-            }
-            echo "</table>";
-        }
-
-        // DIG TXT
-        $dig_txt = $db->prepare("SELECT * FROM dig_txt WHERE scan_id=?");
-        $dig_txt->execute([$scan_id]);
-        $dig_txt_rows = $dig_txt->fetchAll(PDO::FETCH_ASSOC);
-        if ($dig_txt_rows && count($dig_txt_rows)) {
-            echo "<h3>Résultat DIG TXT</h3>
-            <table class='data'><tr>
-            <th>Domaine</th><th>TXT</th><th>TTL</th><th>Raw</th>
-            </tr>";
-            foreach ($dig_txt_rows as $row) {
-                echo "<tr>
-                <td>{$row['domain']}</td>
-                <td>".htmlspecialchars($row['txt'])."</td>
-                <td>{$row['ttl']}</td>
-                <td><span class='info-icon' onclick=\"toggleRaw('dig-txt-{$row['id']}')\">i</span>
-                  <div id='dig-txt-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($row['raw_output'])."</div>
-                </td>
-                </tr>";
-            }
-            echo "</table>";
-        }
-
-        // DIG BRUTEFORCE (top 50)
-        $dig_brute = $db->prepare("SELECT * FROM dig_bruteforce WHERE scan_id=? ORDER BY id ASC LIMIT 50");
-$dig_brute->execute([$scan_id]);
-$dig_brute_rows = $dig_brute->fetchAll(PDO::FETCH_ASSOC);
-if ($dig_brute_rows && count($dig_brute_rows)) {
-    echo "<h3>Résultats DIG Bruteforce (top 50)</h3>
-    <table class='data'><tr>
-    <th>Subdomain</th><th>IP</th><th>Raw (premières lignes)</th>
-    </tr>";
-    foreach ($dig_brute_rows as $row) {
-        $short_raw = implode("\n", array_slice(explode("\n", $row['raw_output']), 0, 20));
-        echo "<tr>
-        <td>{$row['subdomain']}</td>
-        <td>{$row['ip']}</td>
-        <td>
-            <span class='info-icon' onclick=\"toggleRaw('dig-bruteforce-{$row['id']}')\">i</span>
-            <div id='dig-bruteforce-{$row['id']}' class='raw-dig' style='display:none;'>".htmlspecialchars($short_raw)."</div>
-        </td>
-        </tr>";
-    }
-    echo "</table>";
-}
-        // --- fin affichage DIG ---
     }
     ?>
 </div>
