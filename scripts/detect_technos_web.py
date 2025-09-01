@@ -319,11 +319,12 @@ def main():
                 "source": "whatweb"
             })
 
+    # DEBUG: Check nuclei binary
     nuclei_path = subprocess.getoutput("which nuclei")
     debug(f"Using nuclei binary at: {nuclei_path}")
 
     nuclei_cmd = [
-        nuclei_path, "-u", domaine, "-t", "/opt/nuclei-templates/http/technologies", "-c", "5", "-rl", "1", "-pc", "5", "-prc", "5", "--no-color"
+        nuclei_path, "-u", domaine, "-t", "/opt/nuclei-templates/http/technologies", "-c", "7", "-rl", "2", "-pc", "7", "-prc", "7", "--no-color"
     ]
     debug(f"Running nuclei command: {' '.join(nuclei_cmd)}")
     try:
@@ -351,11 +352,13 @@ def main():
 
     nuclei_rows = parse_nuclei_output(nuclei_lines)
 
+    # Ajoute la source 'nuclei' explicitement à chaque ligne nuclei
     for row in nuclei_rows:
         row["source"] = "nuclei"
 
     debug(f"Total whatweb rows: {len(whatweb_rows)} ; nuclei rows: {len(nuclei_rows)}")
 
+    # Affichage CSV complet des deux sources
     print_csv(whatweb_rows + nuclei_rows)
 
 if __name__ == "__main__":
