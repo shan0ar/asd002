@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             exec($cmd . ' >> /opt/asd002-logs/php_exec.log 2>&1');
         }
     }
-
+    $db->prepare("UPDATE scans SET status='done' WHERE id=?")->execute([$scan_id]);
     header("Location: client.php?id=$id&just_launched=$scan_id");
     exit;
 }
@@ -244,11 +244,8 @@ $date_now = date('Y-m-d H:i:s');
     </script>
 </head>
 <body>
-<div class="sidebar">
-    <a href="index.php">← Retour</a>
-    <h2><?=htmlspecialchars($client['name'])?></h2>
-</div>
-<div class="main" style="position:relative;">
+<?php include 'sidebar.php'; ?>
+<div class="main">
     <div class="current-datetime">
         Date/heure actuelle : <b><?=$date_now?></b>
     </div>
