@@ -292,39 +292,51 @@ $date_now = date('Y-m-d H:i:s');
         </tr>
     </table>
 
-    <!-- === Cadre assets/outils ON/OFF === -->
-    <div class="asset-settings-frame">
-        <h2>Paramètres assets & outils pour le prochain scan</h2>
-        <form method="post" style="margin:0">
-            <input type="hidden" name="save_asset_tools" value="1">
-            <table class="data" style="min-width:700px">
-                <tr>
-                    <th>Asset</th>
-                    <?php foreach($scan_tools as $tool_key => $tool_label): ?>
-                        <th><?=$tool_label?></th>
-                    <?php endforeach ?>
-                </tr>
-                <?php foreach($assets as $asset): ?>
-                <tr>
-                    <td><?=htmlspecialchars($asset)?></td>
-                    <?php foreach($scan_tools as $tool_key => $tool_label): ?>
-                        <td>
-                            <input type="checkbox"
-                                   name="asset_tools[<?=htmlspecialchars($asset)?>][<?=$tool_key?>]"
-                                   value="1"
-                                   id="<?=md5($asset.$tool_key)?>"
-                                   <?= (isset($settings[$asset][$tool_key]) && $settings[$asset][$tool_key]) ? 'checked' : ''?>>
-                            <label for="<?=md5($asset.$tool_key)?>"></label>
-                        </td>
-                    <?php endforeach ?>
-                </tr>
-                <?php endforeach ?>
+<div class="asset-settings-frame">
+    <h2>Paramètres assets & outils pour le prochain scan</h2>
+    <form method="post" style="margin:0">
+        <input type="hidden" name="save_asset_tools" value="1">
+        <div class="table-container">
+            <table class="param-table">
+                <tbody>
+                    <tr>
+                        <th>Asset</th>
+                        <?php foreach($scan_tools as $tool_key => $tool_label): ?>
+                            <th><?=$tool_label?></th>
+                        <?php endforeach ?>
+                    </tr>
+                    <?php
+                    $colors = ["color1", "color2", "color3"];
+                    $rownum = 0;
+                    foreach($assets as $asset):
+                        $color_class = $colors[$rownum % 3];
+                    ?>
+                    <tr class="<?=$color_class?>">
+                        <td class="asset-cell"><?=htmlspecialchars($asset)?></td>
+                        <?php foreach($scan_tools as $tool_key => $tool_label): ?>
+                            <td>
+                                <input type="checkbox"
+                                       name="asset_tools[<?=htmlspecialchars($asset)?>][<?=$tool_key?>]"
+                                       value="1"
+                                       id="<?=md5($asset.$tool_key)?>"
+                                       <?= (isset($settings[$asset][$tool_key]) && $settings[$asset][$tool_key]) ? 'checked' : '' ?>>
+                                <label for="<?=md5($asset.$tool_key)?>"></label>
+                            </td>
+                        <?php endforeach ?>
+                    </tr>
+                    <?php
+                    $rownum++;
+                    endforeach;
+                    ?>
+                </tbody>
             </table>
-            <button type="submit">Enregistrer ces paramètres</button>
-        </form>
-        <div style="font-size:0.93em;color:#888;margin-top:8px;">Chaque outil sera utilisé ou non pour chaque asset au prochain scan, selon vos choix ici.</div>
-    </div>
-    <!-- === Fin cadre assets/outils ON/OFF === -->
+        </div>
+        <button type="submit">Enregistrer ces paramètres</button>
+    </form>
+    <div style="font-size:0.93em;color:#888;margin-top:8px;">Chaque outil sera utilisé ou non pour chaque asset au prochain scan, selon vos choix ici.</div>
+</div>
+<!-- === Fin cadre assets/outils ON/OFF === -->
+
 
     <h2>Planification des scans</h2>
     <form method="post">
