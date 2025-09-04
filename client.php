@@ -316,7 +316,11 @@ $date_now = date('Y-m-d H:i:s');
                         <?php foreach($scan_tools as $tool_key => $tool_label): ?>
                             <td>
                                 <input type="checkbox"
-                                         <span class="nmap-gear" data-asset="<?php echo htmlspecialchars($asset); ?>" data-client="<?php echo (int)$client_id; ?>" style="cursor:pointer;margin-left:4px;font-size:1.2em;" title="Paramétrer Nmap">&#9881;</span>
+                                       name="asset_tools[<?=htmlspecialchars($asset)?>][<?=$tool_key?>]"
+                                       value="1"
+                                       id="<?=md5($asset.$tool_key)?>"
+                                       <?= (isset($settings[$asset][$tool_key]) && $settings[$asset][$tool_key]) ? 'checked' : '' ?>>
+                                <label for="<?=md5($asset.$tool_key)?>"></label>
                             </td>
                         <?php endforeach ?>
                     </tr>
@@ -678,78 +682,5 @@ if ($whois_rows && count($whois_rows)) {
     }
     ?>
 </div>
-<!-- Modal Nmap -->
-<div id="nmap-config-modal" style="display:none; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:#fff; border:1px solid #444; padding:20px; z-index:9999;">
-  <h3>Paramètres avancés Nmap</h3>
-  <form id="nmap-config-form">
-    <input type="hidden" name="asset" id="nmap-asset">
-    <input type="hidden" name="client_id" id="nmap-client">
-    <label>Plage de ports : <input name="ports" id="nmap-ports" placeholder="-p- ou -p 22,80,443,1000-2000" style="width:250px"></label><br>
-    <label><input type="checkbox" id="nmap-tcp" value="-sS"> TCP (-sS)</label>
-    <label><input type="checkbox" id="nmap-udp" value="-sU"> UDP (-sU)</label><br>
-    <label>Vitesse : <select id="nmap-speed" name="speed">
-      <option value="">(défaut)</option>
-      <option value="-T0">T0</option>
-      <option value="-T1">T1</option>
-      <option value="-T2">T2</option>
-      <option value="-T3">T3</option>
-      <option value="-T4">T4</option>
-      <option value="-T5">T5</option>
-    </select></label><br>
-    <label><input type="checkbox" id="nmap-pn" value="-Pn"> -Pn (pas de ping)</label>
-    <label><input type="checkbox" id="nmap-open" value="--open"> --open</label>
-    <label><input type="checkbox" id="nmap-os" value="-O"> -O</label>
-    <label><input type="checkbox" id="nmap-sc" value="-sC"> -sC</label><br>
-    <label><input type="checkbox" id="nmap-si" value="-sI"> -sI (Idle scan)</label>
-    <label><input type="checkbox" id="nmap-sx" value="-sX"> -sX (Xmas scan)</label>
-    <label><input type="checkbox" id="nmap-sr" value="-sR"> -sR (RPC scan)</label><br>
-    <label>--script <input name="scripts" id="nmap-scripts" style="width:200px" placeholder="ssl-cert,http-title"></label><br>
-    <label>--script-args <input name="scriptargs" id="nmap-scriptargs" style="width:200px" placeholder="userdb=users.txt,passdb=MonPassw0rd"></label><br>
-    <button type="submit">Enregistrer</button>
-    <button type="button" onclick="document.getElementById('nmap-config-modal').style.display='none'">Annuler</button>
-  </form>
-</div>
-<script>
-document.querySelectorAll('.nmap-gear').forEach(function(gear){
-  gear.addEventListener('click', function(){
-    var asset = gear.getAttribute('data-asset');
-    var client = gear.getAttribute('data-client');
-    document.getElementById('nmap-asset').value = asset;
-    document.getElementById('nmap-client').value = client;
-    // AJAX pour récupérer la config existante
-    fetch('get_nmap_options.php?asset='+encodeURIComponent(asset)+'&client_id='+client)
-      .then(r=>r.json()).then(data=>{
-        document.getElementById('nmap-ports').value = data.ports||'';
-        document.getElementById('nmap-tcp').checked = data.tcp||false;
-        document.getElementById('nmap-udp').checked = data.udp||false;
-        document.getElementById('nmap-speed').value = data.speed||'';
-        document.getElementById('nmap-pn').checked = data.pn||false;
-        document.getElementById('nmap-open').checked = data.open||false;
-        document.getElementById('nmap-os').checked = data.os||false;
-        document.getElementById('nmap-sc').checked = data.sc||false;
-        document.getElementById('nmap-si').checked = data.si||false;
-        document.getElementById('nmap-sx').checked = data.sx||false;
-        document.getElementById('nmap-sr').checked = data.sr||false;
-        document.getElementById('nmap-scripts').value = data.scripts||'';
-        document.getElementById('nmap-scriptargs').value = data.scriptargs||'';
-        document.getElementById('nmap-config-modal').style.display = 'block';
-      });
-  });
-});
-// Sauvegarde
-document.getElementById('nmap-config-form').onsubmit = function(e){
-  e.preventDefault();
-  var formData = new FormData(this);
-  fetch('save_nmap_options.php', {method:'POST', body:formData})
-    .then(r=>r.json()).then(data=>{
-      if(data.success){
-        alert('Options Nmap enregistrées !');
-        document.getElementById('nmap-config-modal').style.display = 'none';
-      }else{
-        alert('Erreur de sauvegarde');
-      }
-    });
-};
-</script>
 </body>
 </html>
