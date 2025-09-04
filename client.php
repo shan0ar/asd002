@@ -449,6 +449,65 @@ if ($nmap_results && count($nmap_results)) {
                 echo "</pre>";
             }
 
+// === WHOIS RESULT ===
+$whois_stmt = $db->prepare("SELECT * FROM whois_data WHERE scan_id=?");
+$whois_stmt->execute([$scan_id]);
+$whois_rows = $whois_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+if ($whois_rows && count($whois_rows)) {
+    echo "<h3>Résultat Whois</h3>";
+    foreach ($whois_rows as $row) {
+        echo "<div style='margin-bottom:1.1em;border:1px solid #bbb;background:#f8fafc;padding:8px 14px;border-radius:6px'>";
+        echo "<b>Domaine :</b> " . htmlspecialchars($row['domain'] ?? '') . "<br>";
+        echo "<b>Registrar :</b> " . htmlspecialchars($row['registrar'] ?? '') . "<br>";
+        echo "<b>Date création :</b> " . htmlspecialchars($row['creation_date'] ?? '') . "<br>";
+        echo "<b>Date expiration :</b> " . htmlspecialchars($row['expiry_date'] ?? '') . "<br>";
+        // Affichage de tous les serveurs DNS (issus de nserver)
+        $all_ns = [];
+        if (!empty($row['name_servers'])) {
+            $ns_list = array_filter(explode('|', $row['name_servers']));
+            $all_ns = $ns_list;
+        } else {
+            if (!empty($row['name_server_1'])) $all_ns[] = $row['name_server_1'];
+            if (!empty($row['name_server_2'])) $all_ns[] = $row['name_server_2'];
+        }
+        echo "<b>Serveurs DNS :</b>";
+        if (count($all_ns)) {
+            echo " ";
+            echo implode(', ', array_map('htmlspecialchars', $all_ns));
+        } else {
+            echo "N/A";
+        }
+        echo "<br>";
+        // Propriétaire
+        if (!empty($row['registrant'])) {
+            echo "<b>Propriétaire :</b> " . htmlspecialchars($row['registrant']) . "<br>";
+            $registrant = trim(strtoupper($row['registrant']));
+            $anonymes = [
+                'REDACTED FOR PRIVACY',
+                'GDPR MASKED',
+                'GDPR REDACTED',
+                'PRIVACY PROTECTION',
+                'NOT DISCLOSED',
+                'PRIVATE PERSON'
+            ];
+            if (!in_array($registrant, $anonymes)) {
+                $linked_stmt = $db->prepare("SELECT domain FROM whois_data WHERE registrant=? AND domain<>?");
+                $linked_stmt->execute([$row['registrant'], $row['domain']]);
+                $linked_domains = $linked_stmt->fetchAll(PDO::FETCH_COLUMN);
+                if (count($linked_domains)) {
+                    echo "<b>Autres domaines liés à ce propriétaire :</b> " . implode(', ', array_map('htmlspecialchars', $linked_domains)) . "<br>";
+                }
+            }
+        }
+        echo "<details><summary>WHOIS complet</summary><pre style='max-width:800px;overflow-x:auto;font-size:0.97em'>" . htmlspecialchars($row['raw_output'] ?? '') . "</pre></details>";
+        echo "</div>";
+    }
+}
+
+
+
+
             $whatweb = $db->prepare("SELECT * FROM whatweb WHERE scan_id=?");
             $whatweb->execute([$scan_id]);
             $whatweb_rows = $whatweb->fetchAll(PDO::FETCH_ASSOC);
