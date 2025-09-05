@@ -682,5 +682,30 @@ if ($whois_rows && count($whois_rows)) {
     }
     ?>
 </div>
+<!-- Bouton flottant export -->
+<a href="report_extract.php" id="reportExportBtn" title="Exporter rapport">
+    🗎 Exporter rapport
+</a>
+<style>
+#reportExportBtn {
+    position: fixed;
+    right: 28px;
+    bottom: 24px;
+    z-index: 9999;
+    background: #1976d2;
+    color: #fff;
+    padding: 16px 22px 16px 24px;
+    border-radius: 40px;
+    box-shadow: 0 4px 16px #0003;
+    font-size: 1.15em;
+    font-weight: 500;
+    text-decoration: none;
+    transition: background 0.2s;
+}
+#reportExportBtn:hover {
+    background: #1565c0;
+    color: #fff;
+}
+</style>
 </body>
 </html>
