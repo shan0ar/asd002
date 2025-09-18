@@ -3,6 +3,7 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 require_once 'includes/db.php';
+require_once 'includes/session_check.php';
 $db = getDb();
 
 $id = intval($_GET['id']);
@@ -41,42 +42,31 @@ $scan_tools = [
     'nmap' => 'Nmap'
 ];
 
-// $scan_id, $client_id connus ici
-// $asset_sources est un tableau associatif asset => array(source1, source2, ...)
-// par exemple: $asset_sources['foo.example.com'] = ['Amass', 'DIG_A']
-$asset_sources = $asset_sources ?? [];
-foreach ($asset_sources as $asset => $sources) {
-    $source_str = implode(' & ', $sources);
-    // Vérifie déjà présent pour ce scan+asset
-    $check = $db->prepare("SELECT id FROM assets_discovered WHERE scan_id=? AND asset=?");
-    $check->execute([$scan_id, $asset]);
-    if (!$check->fetch()) {
-        $ins = $db->prepare("INSERT INTO assets_discovered (scan_id, detected_at, client_id, asset, source) VALUES (?, now(), ?, ?, ?)");
-        $ins->execute([$scan_id, $client_id, $asset, $source_str]);
-    }
-}
 // Enregistrement paramètres assets/outils
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_asset_tools'])) {
-    $asset_params = $_POST['asset_tools'] ?? [];
-    foreach ($asset_params as $asset => $tools) {
+    // Ici on utilise la liste fusionnée $assets (découverts + base), pour gérer toutes les cases affichées
+    foreach ($assets as $asset) {
+        $asset_norm = strtolower(trim($asset));
         foreach ($scan_tools as $tool_key => $tool_label) {
-            $enabled = isset($tools[$tool_key]) ? 1 : 0;
+            // Si la case est cochée, $_POST['asset_tools'][$asset][$tool_key] existe
+            $enabled = !empty($_POST['asset_tools'][$asset][$tool_key]) ? 1 : 0;
             $db->prepare("
                 INSERT INTO asset_scan_settings (client_id, asset, tool, enabled)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT (client_id, asset, tool) DO UPDATE SET enabled=excluded.enabled
-            ")->execute([$id, $asset, $tool_key, $enabled]);
+            ")->execute([$id, $asset_norm, $tool_key, $enabled]);
         }
     }
     echo "<div style='color:green;font-weight:bold;margin:12px 0'>Paramètres d’assets enregistrés !</div>";
 }
 
-// Lecture des paramètres enregistrés
-$stmt = $db->prepare("SELECT asset, tool, enabled FROM asset_scan_settings WHERE client_id=?");
+// Lecture des paramètres enregistrés pour affichage
+$stmt = $db->prepare("SELECT asset, tool, enabled FROM asset_scan_settings WHERE client_id = ?");
 $stmt->execute([$id]);
 $settings = [];
 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $settings[$row['asset']][$row['tool']] = $row['enabled'];
+    $asset_norm = strtolower(trim($row['asset']));
+    $settings[$asset_norm][$row['tool']] = $row['enabled'];
 }
 
 // ======= GESTION NB TENTATIVES BRUTEFORCE =======
@@ -292,7 +282,7 @@ $date_now = date('Y-m-d H:i:s');
         </tr>
     </table>
 
-<div class="asset-settings-frame">
+<div class="asset-settings-frame" style="max-width: 80vw; width: 100vw; padding-left: 0; padding-right: 0;">
     <h2>Paramètres assets & outils pour le prochain scan</h2>
     <form method="post" style="margin:0">
         <input type="hidden" name="save_asset_tools" value="1">
@@ -300,7 +290,7 @@ $date_now = date('Y-m-d H:i:s');
             <table class="param-table">
                 <tbody>
                     <tr>
-                        <th>Asset</th>
+                        <th style="min-width: 320px;">Asset</th>
                         <?php foreach($scan_tools as $tool_key => $tool_label): ?>
                             <th><?=$tool_label?></th>
                         <?php endforeach ?>
@@ -341,13 +331,17 @@ $date_now = date('Y-m-d H:i:s');
     <h2>Planification des scans</h2>
     <form method="post">
         <label>Fréquence des scans :
-            <select name="frequency">
-                <option value="weekly"<?=($schedule['frequency']=='weekly'?' selected':'')?>>Hebdomadaire</option>
-                <option value="monthly"<?=($schedule['frequency']=='monthly'?' selected':'')?>>Mensuel</option>
-                <option value="quarterly"<?=($schedule['frequency']=='quarterly'?' selected':'')?>>Trimestriel</option>
-                <option value="semiannual"<?=($schedule['frequency']=='semiannual'?' selected':'')?>>Semestriel</option>
-                <option value="annual"<?=($schedule['frequency']=='annual'?' selected':'')?>>Annuel</option>
-            </select>
+            <?php
+$freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] : 'weekly';
+?>
+<select name="frequency">
+    <option value="weekly"<?=($freq_val=='weekly'?' selected':'')?>>Hebdomadaire</option>
+    <option value="monthly"<?=($freq_val=='monthly'?' selected':'')?>>Mensuel</option>
+    <option value="quarterly"<?=($freq_val=='quarterly'?' selected':'')?>>Trimestriel</option>
+    <option value="semiannual"<?=($freq_val=='semiannual'?' selected':'')?>>Semestriel</option>
+    <option value="annual"<?=($freq_val=='annual'?' selected':'')?>>Annuel</option>
+</select>
+
         </label>
         <label>Jour (0=Lundi, 6=Dimanche): <input type="number" name="day_of_week" min="0" max="6" value="<?=htmlspecialchars($schedule['day_of_week']??'')?>"></label>
         <label>Heure : <input type="time" name="time" value="<?=htmlspecialchars($schedule['time']??'00:00')?>"></label>
@@ -682,10 +676,22 @@ if ($whois_rows && count($whois_rows)) {
     }
     ?>
 </div>
-<!-- Bouton flottant export -->
-<a href="report_extract.php" id="reportExportBtn" title="Exporter rapport">
-    🗎 Exporter rapport
-</a>
+<?php
+if (!isset($client_id)) {
+    // Récupère l'id client depuis l'URL, la session, ou autre
+    $client_id = isset($_GET['client_id']) ? intval($_GET['client_id']) : 0;
+}
+if (!isset($selected_date)) {
+    // Récupère la date sélectionnée (par exemple depuis $_GET ou $_POST)
+    $selected_date = isset($_GET['date']) ? $_GET['date'] : '';
+}
+?>
+<form method="GET" action="export_report.php" style="position: fixed; bottom: 30px; right: 30px; z-index: 999;">
+  <input type="hidden" name="client_id" value="<?php echo isset($client_id) ? $client_id : ''; ?>">
+  <input type="hidden" name="date" value="<?php echo isset($selected_date) ? $selected_date : ''; ?>">
+  <button type="submit" class="btn btn-primary">📄 Rapport</button>
+</form>
+
 <style>
 #reportExportBtn {
     position: fixed;
