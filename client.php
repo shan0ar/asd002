@@ -677,21 +677,50 @@ if ($whois_rows && count($whois_rows)) {
     ?>
 </div>
 <?php
-if (!isset($client_id)) {
-    // Récupère l'id client depuis l'URL, la session, ou autre
-    $client_id = isset($_GET['client_id']) ? intval($_GET['client_id']) : 0;
+// ... (autres parties de ton fichier)
+
+// Supposons que tu as déjà $client (tableau contenant les infos du client)
+// Et que tu as la date sélectionnée via un formulaire ou une variable, par exemple $selected_date
+
+// Si tu utilises un formulaire/calendrier pour la date, récupère la valeur POST ou GET, sinon prends le dernier scan
+if (!isset($selected_date) || !$selected_date) {
+    $selected_date = '';
+    // Récupère le dernier scan si aucune date sélectionnée
+    if (isset($client['id']) && $client['id']) {
+        $db = new PDO('pgsql:host=localhost;dbname=osintapp', 'thomas', 'thomas');
+        $row = $db->query("SELECT scan_date FROM scans WHERE client_id = {$client['id']} ORDER BY scan_date DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        if ($row) $selected_date = substr($row['scan_date'], 0, 10);
+    }
 }
-if (!isset($selected_date)) {
-    // Récupère la date sélectionnée (par exemple depuis $_GET ou $_POST)
-    $selected_date = isset($_GET['date']) ? $_GET['date'] : '';
+?>
+<?php
+// Récupération de l'id client (existant)
+$client_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+
+// Construction de la date à partir de l'URL
+if (isset($_GET['year']) && isset($_GET['month']) && isset($_GET['day'])) {
+    $year = intval($_GET['year']);
+    $month = str_pad(intval($_GET['month']), 2, '0', STR_PAD_LEFT);
+    $day = str_pad(intval($_GET['day']), 2, '0', STR_PAD_LEFT);
+    $selected_scan_date = "$year-$month-$day";
+} else {
+    // Par défaut, dernière date de scan du client
+    $selected_scan_date = '';
+    if ($client_id) {
+        $db = new PDO('pgsql:host=localhost;dbname=osintapp', 'thomas', 'thomas');
+        $row = $db->query("SELECT scan_date FROM scans WHERE client_id = $client_id ORDER BY scan_date DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        if ($row) $selected_scan_date = substr($row['scan_date'], 0, 10);
+    }
 }
 ?>
 <form method="GET" action="export_report.php" style="position: fixed; bottom: 30px; right: 30px; z-index: 999;">
-  <input type="hidden" name="client_id" value="<?php echo isset($client_id) ? $client_id : ''; ?>">
-  <input type="hidden" name="date" value="<?php echo isset($selected_date) ? $selected_date : ''; ?>">
+  <input type="hidden" name="client_id" value="<?php echo htmlspecialchars($client_id); ?>">
+  <input type="hidden" name="date" value="<?php echo htmlspecialchars($selected_scan_date); ?>">
   <button type="submit" class="btn btn-primary">📄 Rapport</button>
 </form>
 
+
+<!-- ... reste du HTML ... -->
 <style>
 #reportExportBtn {
     position: fixed;
