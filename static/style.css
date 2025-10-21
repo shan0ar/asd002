@@ -1,9 +1,0 @@
-body { font-family: Arial, sans-serif; background: #f3f6fa; margin:0; }
-.sidebar { float:left; width:220px; background:#e1eaff; min-height:100vh; padding:1em; }
-.main { margin-left:240px; padding:2em; }
-table { border-collapse: collapse; width: 100%; margin-bottom:1em; }
-th, td { border:1px solid #bbb; padding:6px; }
-th { background: #dde; cursor:pointer; }
-.calendar td, .calendar th { width:36px; text-align:center; }
-.calendar { width:auto; margin-bottom:2em; }
-input[type=text], textarea { width: 100%; }
