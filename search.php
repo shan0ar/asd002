@@ -1,5 +1,6 @@
 <?php
 require_once 'includes/db.php';
+require_once 'includes/session_check.php';
 $db = getDb();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['client_name'])) {
