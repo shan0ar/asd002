@@ -1,0 +1,34 @@
+#!/bin/bash
+set -u
+
+ASSET="$1"
+SCANID="$2"
+LOGDIR="/opt/asd002-logs"
+PSQL_CMD="psql -h localhost -p 5432 -d osintapp -U thomas"
+export PGPASSWORD="thomas"
+LOGFILE="${LOGDIR}/scan_whois_${SCANID}.log"
+
+mkdir -p "$LOGDIR"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+client_id=$($PSQL_CMD -tAc "SELECT client_id FROM scans WHERE id=$SCANID")
+if [[ -z "$client_id" ]]; then
+    echo "ERROR: client_id introuvable pour scan $SCANID"
+    exit 1
+fi
+
+WHOIS_TXT="${LOGDIR}/whois_${SCANID}.txt"
+timeout 120 whois "${ASSET#*//}" > "$WHOIS_TXT" 2>>"$LOGFILE" || echo "WARNING: whois timeout ou erreur pour $ASSET"
+WHOIS_RAW=$(cat "$WHOIS_TXT" | sed "s/'/''/g")
+WHOIS_DOMAIN=$(grep -i 'Domain Name:' "$WHOIS_TXT" | head -1 | awk '{print $NF}')
+WHOIS_REGISTRAR=$(grep -i 'Registrar:' "$WHOIS_TXT" | grep -v Whois | head -1 | cut -d: -f2- | xargs)
+WHOIS_CREATION=$(grep -Ei 'Creation Date:' "$WHOIS_TXT" | head -1 | awk '{print $NF}')
+WHOIS_EXPIRY=$(grep -Ei 'Expiry Date:|Expiration Date:' "$WHOIS_TXT" | head -1 | awk '{print $NF}')
+WHOIS_NS1=$(grep -Ei 'Name Server:' "$WHOIS_TXT" | head -1 | awk '{print $NF}')
+WHOIS_NS2=$(grep -Ei 'Name Server:' "$WHOIS_TXT" | sed -n '2p' | awk '{print $NF}')
+WHOIS_DNSSEC=$(grep -i 'DNSSEC:' "$WHOIS_TXT" | head -1 | awk '{print $NF}')
+
+[[ -z "$WHOIS_CREATION" ]] && WHOIS_CREATION=NULL || WHOIS_CREATION="'$WHOIS_CREATION'"
+[[ -z "$WHOIS_EXPIRY" ]] && WHOIS_EXPIRY=NULL || WHOIS_EXPIRY="'$WHOIS_EXPIRY'"
+
+$PSQL_CMD -c "INSERT INTO whois_data (scan_id, domain, registrar, creation_date, expiry_date, name_server_1, name_server_2, dnssec, raw_output) VALUES ($SCANID, '$WHOIS_DOMAIN', '$WHOIS_REGISTRAR', $WHOIS_CREATION, $WHOIS_EXPIRY, '$WHOIS_NS1', '$WHOIS_NS2', '$WHOIS_DNSSEC', \$\$${WHOIS_RAW}\$\$);" 2>>"$LOGFILE"

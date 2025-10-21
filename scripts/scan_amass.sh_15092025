@@ -1,0 +1,24 @@
+#!/bin/bash
+set -u
+
+ASSET="$1"
+SCANID="$2"
+LOGDIR="/opt/asd002-logs"
+AMASS_PARSER="/var/www/html/asd002/scripts/amass_to_pg3.py"
+PSQL_CMD="psql -h localhost -p 5432 -d osintapp -U thomas"
+export PGPASSWORD="thomas"
+export HOME=/var/www
+LOGFILE="${LOGDIR}/scan_amass_${SCANID}.log"
+AMASS_RAW="${LOGDIR}/amass_raw_${SCANID}.txt"
+
+mkdir -p "$LOGDIR"
+# Debug pour traçabilité de l'appel depuis l'interface web
+echo "=== Lancement scan_amass.sh ===" >> /opt/asd002-logs/DEBUG_CALLS.txt
+date >> /opt/asd002-logs/DEBUG_CALLS.txt
+echo "ARGS: $@" >> /opt/asd002-logs/DEBUG_CALLS.txt
+whoami >> /opt/asd002-logs/DEBUG_CALLS.txt
+env >> /opt/asd002-logs/DEBUG_CALLS.txt
+
+exec > >(tee -a "$LOGFILE") 2>&1
+
+python3 "$AMASS_PARSER" "${ASSET#*//}" "$SCANID" > "$AMASS_RAW" 2>>"$LOGFILE"

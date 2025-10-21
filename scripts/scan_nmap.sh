@@ -1,0 +1,44 @@
+#!/bin/bash
+set -u
+
+ASSET="$1"
+SCANID="$2"
+LOGDIR="/opt/asd002-logs"
+PSQL_CMD="psql -h localhost -p 5432 -d osintapp -U thomas"
+export PGPASSWORD="thomas"
+LOGFILE="${LOGDIR}/scan_nmap_${SCANID}.log"
+
+mkdir -p "$LOGDIR"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+# Récupérer le client_id pour cet asset/scan
+client_id=$($PSQL_CMD -tAc "SELECT client_id FROM scans WHERE id=$SCANID")
+
+# Récupérer les options personnalisées Nmap si elles existent, sinon utiliser la config par défaut
+NMAP_OPTS=$($PSQL_CMD -tAc "SELECT nmap_options FROM asset_scan_settings WHERE client_id=$client_id AND asset='$ASSET' AND tool='nmap'")
+if [[ -z "$NMAP_OPTS" || "$NMAP_OPTS" == "NULL" ]]; then
+    NMAP_OPTS="-sV -T5 -Pn --open"
+fi
+
+NMAP_RAW="${LOGDIR}/nmap_${SCANID}.txt"
+NMAP_TARGET="${ASSET#*//}"
+
+# Lancer le scan Nmap avec les options personnalisées
+nmap $NMAP_OPTS "$NMAP_TARGET" > "$NMAP_RAW" 2>&1
+
+awk '/^PORT[ ]+STATE[ ]+SERVICE[ ]+VERSION$/{p=1;next} /^[0-9]+\/tcp/{if(p){print;next}} /^[A-Z]/{p=0}' "$NMAP_RAW" | \
+grep -v "tcpwrapped" | \
+while read -r line; do
+    port=$(echo "$line" | awk '{print $1}')
+    state=$(echo "$line" | awk '{print $2}')
+    service=$(echo "$line" | awk '{print $3}')
+    # Si version existe, la récupérer, sinon vide
+    num_fields=$(echo "$line" | awk '{print NF}')
+    if [ "$num_fields" -ge 4 ]; then
+        version=$(echo "$line" | awk '{for(i=4;i<=NF;++i) printf $i" "; print ""}' | sed 's/[[:space:]]*$//')
+    else
+        version=""
+    fi
+    version=$(echo "$version" | sed "s/'/''/g")
+    $PSQL_CMD -c "INSERT INTO nmap_results (scan_id, asset, port, state, service, version) VALUES ($SCANID, '${ASSET#*//}', '$port', '$state', '$service', '$version');"
+done
