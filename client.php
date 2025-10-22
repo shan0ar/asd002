@@ -411,12 +411,33 @@ if (isset($_GET['action']) && $_GET['action'] === 'add_asset' && $_SERVER['REQUE
 // --- Aperçu CTI pour le client (à insérer dans client.php, avant asset-settings-frame) ---
 // Utilise $db et $id déjà définis dans client.php
 try {
-    $ctiCountStmt = $db->prepare("SELECT COUNT(*) FROM cti_results WHERE client_id = ?");
-    $ctiCountStmt->execute([$id]);
+    // Récupère les patterns blacklistés pour ce client
+    $blacklistStmt = $db->prepare("SELECT value FROM cti_blacklist WHERE type='victim' AND client_id = ?");
+    $blacklistStmt->execute([$id]);
+    $blacklisted_patterns = $blacklistStmt->fetchAll(PDO::FETCH_COLUMN);
+    
+    // Compte les résultats non blacklistés
+    if (empty($blacklisted_patterns)) {
+        $ctiCountStmt = $db->prepare("SELECT COUNT(*) FROM cti_results WHERE client_id = ?");
+        $ctiCountStmt->execute([$id]);
+    } else {
+        $placeholders = implode(',', array_fill(0, count($blacklisted_patterns), '?'));
+        $ctiCountStmt = $db->prepare("SELECT COUNT(*) FROM cti_results WHERE client_id = ? AND pattern NOT IN ($placeholders)");
+        $params = array_merge([$id], $blacklisted_patterns);
+        $ctiCountStmt->execute($params);
+    }
     $cti_count = intval($ctiCountStmt->fetchColumn());
 
-    $ctiLastStmt = $db->prepare("SELECT r.*, c.name AS client_name FROM cti_results r JOIN clients c ON r.client_id=c.id WHERE r.client_id = ? ORDER BY r.added DESC LIMIT 5");
-    $ctiLastStmt->execute([$id]);
+    // Récupère les derniers résultats non blacklistés
+    if (empty($blacklisted_patterns)) {
+        $ctiLastStmt = $db->prepare("SELECT r.*, c.name AS client_name FROM cti_results r JOIN clients c ON r.client_id=c.id WHERE r.client_id = ? ORDER BY r.added DESC LIMIT 5");
+        $ctiLastStmt->execute([$id]);
+    } else {
+        $placeholders = implode(',', array_fill(0, count($blacklisted_patterns), '?'));
+        $ctiLastStmt = $db->prepare("SELECT r.*, c.name AS client_name FROM cti_results r JOIN clients c ON r.client_id=c.id WHERE r.client_id = ? AND r.pattern NOT IN ($placeholders) ORDER BY r.added DESC LIMIT 5");
+        $params = array_merge([$id], $blacklisted_patterns);
+        $ctiLastStmt->execute($params);
+    }
     $cti_rows = $ctiLastStmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Exception $e) {
     $cti_count = 0;
