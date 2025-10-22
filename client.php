@@ -407,50 +407,301 @@ if (isset($_GET['action']) && $_GET['action'] === 'add_asset' && $_SERVER['REQUE
         </tr>
     </table>
 
-<div class="asset-settings-frame" style="max-width: 80vw; width: 100vw; padding-left: 0; padding-right: 0;">
-    <h2>Paramètres assets & outils pour le prochain scan</h2>
-    <form method="post" style="margin:0">
-        <input type="hidden" name="save_asset_tools" value="1">
-        <div class="table-container">
-            <table class="param-table">
-                <tbody>
+<?php
+// --- Aperçu CTI pour le client (à insérer dans client.php, avant asset-settings-frame) ---
+// Utilise $db et $id déjà définis dans client.php
+try {
+    $ctiCountStmt = $db->prepare("SELECT COUNT(*) FROM cti_results WHERE client_id = ?");
+    $ctiCountStmt->execute([$id]);
+    $cti_count = intval($ctiCountStmt->fetchColumn());
+
+    $ctiLastStmt = $db->prepare("SELECT r.*, c.name AS client_name FROM cti_results r JOIN clients c ON r.client_id=c.id WHERE r.client_id = ? ORDER BY r.added DESC LIMIT 5");
+    $ctiLastStmt->execute([$id]);
+    $cti_rows = $ctiLastStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $cti_count = 0;
+    $cti_rows = [];
+}
+
+// Helper pour formater une date en "DD/MM/YYYY HH:MM"
+function formatDateTime($s) {
+    if (!$s) return '-';
+    $ts = strtotime($s);
+    if ($ts === false) {
+        return htmlspecialchars($s);
+    }
+    return date('d/m/Y H:i', $ts);
+}
+?>
+<style>
+.cti-panel { border:1px solid #cfe0f5; background:#f8fbff; border-radius:8px; margin:1em 0; overflow:hidden; max-width:80vw; }
+.cti-header { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; cursor:pointer; background:#eaf4ff; }
+.cti-title { font-weight:700; color:#0b3a66; }
+.cti-status { font-weight:700; padding:6px 10px; border-radius:6px; }
+.cti-status.ok { background:#e6f8ee; color:#167a3a; }
+.cti-status.alert { background:#fff0f0; color:#a81e1e; }
+.cti-body { padding:12px 14px; display:none; }
+.cti-table { width:100%; border-collapse:collapse; font-size:0.95em; }
+.cti-table th, .cti-table td { border-bottom:1px solid #e0eaf6; padding:6px 8px; text-align:left; vertical-align:top; }
+.cti-toggle-btn { font-size:16px; display:inline-block; transform:rotate(0deg); transition:transform .18s ease; margin-right:8px; }
+.cti-meta { color:#556; font-size:0.92em; }
+.cti-screenshot-thumb { max-width:120px; max-height:66px; border-radius:4px; cursor:pointer; border:1px solid #ddd; }
+.cti-open-icon { font-size:18px; display:inline-block; min-width:22px; text-align:center; }
+</style>
+
+<div class="cti-panel" id="cti-panel">
+    <div class="cti-header" onclick="toggleCtiPanel()" role="button" aria-pressed="false">
+        <div style="display:flex;align-items:center;">
+            <span id="cti-toggle" class="cti-toggle-btn">▶</span>
+            <div>
+                <div class="cti-title">Victime d'une cyberattaque ?</div>
+            </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+            <?php if ($cti_count > 0): ?>
+                <div class="cti-status alert">Victime — <?= $cti_count ?> résultat<?= $cti_count>1?'s':'' ?></div>
+            <?php else: ?>
+                <div class="cti-status ok">Aucune trace récente</div>
+            <?php endif; ?>
+            <!-- Remplacé le lien "Ouvrir CTI" par une icône flèche -->
+            <span id="cti-open-icon" class="cti-open-icon" aria-label="Ouvrir CTI">▼</span>
+        </div>
+    </div>
+
+    <div class="cti-body" id="cti-body">
+        <?php if (count($cti_rows) === 0): ?>
+            <div style="color:#556;">Aucun résultat CTI pour ce client.</div>
+        <?php else: ?>
+            <div style="margin-bottom:8px;color:#333;font-weight:600;">Derniers résultats (5 plus récents)</div>
+            <div style="overflow:auto;">
+            <table class="cti-table">
+                <thead>
                     <tr>
-                        <th style="min-width: 320px;">Asset</th>
-                        <?php foreach($scan_tools as $tool_key => $tool_label): ?>
-                            <th><?=$tool_label?></th>
-                        <?php endforeach ?>
+                        <th>Client</th>
+                        <th>Pattern</th>
+                        <th>Titre</th>
+                        <th>Group</th>
+                        <th>Date découverte</th>
+                        <th>Date publication</th>
+                        <th>Screenshot</th>
+                        <th>Permalink</th>
                     </tr>
-                    <?php
-                    $colors = ["color1", "color2", "color3"];
-                    $rownum = 0;
-                    foreach($assets as $asset):
-                        $color_class = $colors[$rownum % 3];
-                    ?>
-                    <tr class="<?=$color_class?>">
-                        <td class="asset-cell"><?=htmlspecialchars($asset)?></td>
-                        <?php foreach($scan_tools as $tool_key => $tool_label): ?>
-                            <td>
-                                <input type="checkbox"
-                                       name="asset_tools[<?=htmlspecialchars($asset)?>][<?=$tool_key?>]"
-                                       value="1"
-                                       id="<?=md5($asset.$tool_key)?>"
-                                       <?= (isset($settings[$asset][$tool_key]) && $settings[$asset][$tool_key]) ? 'checked' : '' ?>>
-                                <label for="<?=md5($asset.$tool_key)?>"></label>
-                            </td>
-                        <?php endforeach ?>
+                </thead>
+                <tbody>
+                <?php foreach ($cti_rows as $r):
+                    $data = json_decode($r['data'], true) ?: [];
+                    $title = $data['post_title'] ?? $data['victim'] ?? $data['title'] ?? '';
+                    $group = $data['group_name'] ?? ($data['ransomware'] ?? '');
+                    $discovered = $data['discovered'] ?? ($data['date'] ?? '');
+                    $published = $data['published'] ?? ($data['added'] ?? $r['added']);
+                    $screenshot = $data['screenshot'] ?? '';
+                    $permalink = $data['permalink'] ?? ($data['url'] ?? '');
+                    $clientName = htmlspecialchars($r['client_name'] ?? $client['name']);
+                    $pattern = htmlspecialchars($r['pattern'] ?? '');
+                    $title_s = htmlspecialchars(is_array($title) ? json_encode($title) : $title);
+                    $group_s = htmlspecialchars(is_array($group) ? json_encode($group) : $group);
+                    $discovered_s = formatDateTime($discovered);
+                    $published_s = formatDateTime($published);
+                    $screenshot_esc = htmlspecialchars($screenshot);
+                    $permalink_esc = htmlspecialchars($permalink);
+                ?>
+                    <tr>
+                        <td><?= $clientName ?></td>
+                        <td><code><?= $pattern ?></code></td>
+                        <td><?= $title_s ?></td>
+                        <td><?= $group_s ?></td>
+                        <td><?= $discovered_s ?></td>
+                        <td><?= $published_s ?></td>
+                        <td>
+                            <?php if ($screenshot): ?>
+                                <img src="<?= $screenshot_esc ?>" alt="screenshot" class="cti-screenshot-thumb" onclick="showCtiImg('<?= $screenshot_esc ?>')">
+                            <?php else: ?>
+                                -
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if ($permalink): ?>
+                                <a href="<?= $permalink_esc ?>" target="_blank" rel="noopener noreferrer">Lien</a>
+                            <?php else: ?>
+                                -
+                            <?php endif; ?>
+                        </td>
                     </tr>
-                    <?php
-                    $rownum++;
-                    endforeach;
-                    ?>
+                <?php endforeach; ?>
                 </tbody>
             </table>
-        </div>
-        <button type="submit">Enregistrer ces paramètres</button>
-    </form>
-    <div style="font-size:0.93em;color:#888;margin-top:8px;">Chaque outil sera utilisé ou non pour chaque asset au prochain scan, selon vos choix ici.</div>
+            </div>
+            <div style="margin-top:8px;color:#666;font-size:0.92em;">Pour gérer / supprimer / blacklister, ouvre la page CTI complète.</div>
+        <?php endif; ?>
+    </div>
 </div>
-<!-- === Fin cadre assets/outils ON/OFF === -->
+
+<!-- Modal screenshot CTI -->
+<div id="ctiImgModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;z-index:9999;">
+    <img id="ctiImgModalImg" src="" style="max-width:90vw;max-height:90vh;border:4px solid #fff;border-radius:6px;box-shadow:0 8px 40px #0006;">
+</div>
+
+<script>
+(function(){
+    var clientId = <?= json_encode(intval($id)) ?>;
+    var storageKey = 'cti_panel_open_' + clientId;
+    var body = document.getElementById('cti-body');
+    var toggle = document.getElementById('cti-toggle');
+    var openIcon = document.getElementById('cti-open-icon');
+    var header = document.querySelector('.cti-header');
+
+    function setOpen(open) {
+        if (!body || !toggle || !openIcon || !header) return;
+        if (open) {
+            body.style.display = 'block';
+            toggle.style.transform = 'rotate(90deg)';
+            openIcon.textContent = '▲';
+            header.setAttribute('aria-pressed', 'true');
+            localStorage.setItem(storageKey, '1');
+        } else {
+            body.style.display = 'none';
+            toggle.style.transform = 'rotate(0deg)';
+            openIcon.textContent = '▼';
+            header.setAttribute('aria-pressed', 'false');
+            localStorage.setItem(storageKey, '0');
+        }
+    }
+    window.toggleCtiPanel = function() {
+        if (!body) return;
+        var isHidden = (body.style.display === 'none' || body.style.display === '');
+        setOpen(isHidden);
+    };
+    try {
+        var stored = localStorage.getItem(storageKey);
+        setOpen(stored === '1');
+    } catch(e) {
+        setOpen(false);
+    }
+
+    // Image modal handlers
+    window.showCtiImg = function(url) {
+        var modal = document.getElementById('ctiImgModal');
+        var img = document.getElementById('ctiImgModalImg');
+        img.src = url;
+        modal.style.display = 'flex';
+    };
+    document.getElementById('ctiImgModal').onclick = function() {
+        this.style.display = 'none';
+        document.getElementById('ctiImgModalImg').src = '';
+    };
+
+    // Rendre l'icône cliquable indépendamment (optionnel)
+    if (openIcon) {
+        openIcon.style.cursor = 'pointer';
+        openIcon.onclick = function(ev) { ev.stopPropagation(); toggleCtiPanel(); };
+    }
+})();
+</script>
+
+<!-- Remplacer l'ancien bloc asset-settings-frame par celui-ci -->
+<div class="asset-settings-frame" id="asset-settings-frame" style="max-width: 80vw; width: 100vw; padding-left: 0; padding-right: 0;">
+    <div class="asf-header" onclick="toggleAssetSettings()" role="button" aria-pressed="false"
+         style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:10px 20px;border-bottom:1px solid #d0def5;background:#f4f8ff;">
+        <div style="display:flex;align-items:center;">
+            <span id="asset-toggle" style="font-size:18px;display:inline-block;margin-right:10px;">▶</span>
+            <h2 style="margin:0;font-size:1.15em;color:#143a7a;">Paramètres assets & outils pour le prochain scan</h2>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <span id="asset-open-icon" style="font-size:18px;display:inline-block;min-width:22px;text-align:center;" aria-label="ouvrir">▼</span>
+        </div>
+    </div>
+
+    <div id="asset-settings-body" style="display:none;padding:14px 18px;">
+        <form method="post" style="margin:0">
+            <input type="hidden" name="save_asset_tools" value="1">
+            <div class="table-container">
+                <table class="param-table">
+                    <tbody>
+                        <tr>
+                            <th style="min-width: 320px;">Asset</th>
+                            <?php foreach($scan_tools as $tool_key => $tool_label): ?>
+                                <th><?=$tool_label?></th>
+                            <?php endforeach ?>
+                        </tr>
+                        <?php
+                        $colors = ["color1", "color2", "color3"];
+                        $rownum = 0;
+                        foreach($assets as $asset):
+                            $color_class = $colors[$rownum % 3];
+                        ?>
+                        <tr class="<?=$color_class?>">
+                            <td class="asset-cell"><?=htmlspecialchars($asset)?></td>
+                            <?php foreach($scan_tools as $tool_key => $tool_label): ?>
+                                <td>
+                                    <input type="checkbox"
+                                           name="asset_tools[<?=htmlspecialchars($asset)?>][<?=$tool_key?>]"
+                                           value="1"
+                                           id="<?=md5($asset.$tool_key)?>"
+                                           <?= (isset($settings[$asset][$tool_key]) && $settings[$asset][$tool_key]) ? 'checked' : '' ?>>
+                                    <label for="<?=md5($asset.$tool_key)?>"></label>
+                                </td>
+                            <?php endforeach ?>
+                        </tr>
+                        <?php
+                        $rownum++;
+                        endforeach;
+                        ?>
+                    </tbody>
+                </table>
+            </div>
+            <button type="submit">Enregistrer ces paramètres</button>
+        </form>
+        <div style="font-size:0.93em;color:#888;margin-top:8px;">Chaque outil sera utilisé ou non pour chaque asset au prochain scan, selon vos choix ici.</div>
+    </div>
+</div>
+
+<script>
+(function(){
+    var clientId = <?= json_encode(intval($id)) ?>;
+    var storageKey = 'asset_settings_open_' + clientId;
+    var body = document.getElementById('asset-settings-body');
+    var toggle = document.getElementById('asset-toggle');
+    var openIcon = document.getElementById('asset-open-icon');
+    var header = document.querySelector('.asf-header');
+
+    function setOpen(open) {
+        if (!body || !toggle || !openIcon || !header) return;
+        if (open) {
+            body.style.display = 'block';
+            toggle.style.transform = 'rotate(90deg)';
+            openIcon.textContent = '▲';
+            header.setAttribute('aria-pressed', 'true');
+            localStorage.setItem(storageKey, '1');
+        } else {
+            body.style.display = 'none';
+            toggle.style.transform = 'rotate(0deg)';
+            openIcon.textContent = '▼';
+            header.setAttribute('aria-pressed', 'false');
+            localStorage.setItem(storageKey, '0');
+        }
+    }
+
+    window.toggleAssetSettings = function() {
+        if (!body) return;
+        var isHidden = (body.style.display === 'none' || body.style.display === '');
+        setOpen(isHidden);
+    };
+
+    // initialisation : fermé par défaut sauf si localStorage indique ouvert
+    try {
+        var stored = localStorage.getItem(storageKey);
+        setOpen(stored === '1');
+    } catch(e) {
+        setOpen(false);
+    }
+
+    // rendre l'icône cliquable indépendamment (évite de devoir viser l'en-tête)
+    if (openIcon) {
+        openIcon.style.cursor = 'pointer';
+        openIcon.onclick = function(ev) { ev.stopPropagation(); toggleAssetSettings(); };
+    }
+})();
+</script>
 
 
     <h2>Planification des scans</h2>
