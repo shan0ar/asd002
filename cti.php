@@ -224,6 +224,16 @@ foreach ($blacklist as $b) {
     $blacklisted[$b['client_id']][] = $b['value'];
 }
 
+// Récupération des 30 dernières victimes en France (tous clients confondus)
+$france_victims = $pdo->query("
+    SELECT r.*, c.name as client_name 
+    FROM cti_results r 
+    JOIN clients c ON r.client_id = c.id 
+    WHERE r.data::jsonb->>'country' = 'FR'
+    ORDER BY r.added DESC 
+    LIMIT 30
+")->fetchAll();
+
 // Récupération des résultats
 $results = $pdo->query("SELECT r.*, c.name FROM cti_results r JOIN clients c ON r.client_id = c.id ORDER BY r.added DESC LIMIT 200")->fetchAll();
 ?>
@@ -234,7 +244,7 @@ $results = $pdo->query("SELECT r.*, c.name FROM cti_results r JOIN clients c ON 
     <title>Ajout de patterns client</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 30px; }
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container { max-width: 1200px; margin: 0 auto; margin-right: 390px; }
         label { font-weight: bold; margin-top: 15px; display: block; }
         textarea { width: 100%; height: 80px; }
         select, input[type="submit"] { padding: 6px; }
@@ -282,6 +292,82 @@ $results = $pdo->query("SELECT r.*, c.name FROM cti_results r JOIN clients c ON 
             border: 4px solid #fff;
             border-radius: 8px;
             box-shadow: 0 0 32px rgba(0,0,0,0.6);
+        }
+        .france-victims-box {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 350px;
+            max-height: 500px;
+            background: #fff;
+            border: 2px solid #2196f3;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .france-victims-box-header {
+            background: #2196f3;
+            color: #fff;
+            padding: 12px 16px;
+            font-weight: bold;
+            font-size: 16px;
+            border-bottom: 2px solid #1769aa;
+        }
+        .france-victims-box-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+        .france-victim-item {
+            padding: 10px 16px;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .france-victim-item:last-child {
+            border-bottom: none;
+        }
+        .france-victim-item:hover {
+            background: #f5f5f5;
+        }
+        .france-victim-title {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        .france-victim-details {
+            color: #666;
+            font-size: 12px;
+        }
+        .france-victim-client {
+            color: #2196f3;
+            font-weight: 600;
+        }
+        .france-victim-date {
+            color: #999;
+            font-size: 11px;
+            font-style: italic;
+        }
+        @media (max-width: 1400px) {
+            .france-victims-box {
+                width: 300px;
+            }
+        }
+        @media (max-width: 1200px) {
+            .france-victims-box {
+                position: relative;
+                top: 0;
+                right: 0;
+                width: 100%;
+                margin-bottom: 20px;
+                max-height: 400px;
+            }
+            .container {
+                margin-right: auto;
+            }
         }
     </style>
     <script>
@@ -352,6 +438,49 @@ $results = $pdo->query("SELECT r.*, c.name FROM cti_results r JOIN clients c ON 
 </head>
 <body>
 <?php include 'sidebar.php'; ?>
+<!-- Box des 30 dernières victimes en France -->
+<div class="france-victims-box">
+    <div class="france-victims-box-header">
+        🇫🇷 30 Dernières Victimes en France
+    </div>
+    <div class="france-victims-box-content">
+        <?php if (count($france_victims) > 0): ?>
+            <?php foreach ($france_victims as $victim): 
+                $data = json_decode($victim['data'], true);
+                $title = '';
+                $group = '';
+                $date = '';
+                
+                if ($victim['source'] === 'victims_search') {
+                    $title = $data['post_title'] ?? '';
+                    $group = $data['group_name'] ?? '';
+                    $date = $data['discovered'] ?? $data['published'] ?? '';
+                } else { // press_recent
+                    $title = $data['victim'] ?? '';
+                    $group = $data['ransomware'] ?? '';
+                    $date = $data['date'] ?? $data['added'] ?? '';
+                }
+            ?>
+                <div class="france-victim-item">
+                    <div class="france-victim-title"><?= htmlspecialchars($title) ?></div>
+                    <div class="france-victim-details">
+                        <span class="france-victim-client"><?= htmlspecialchars($victim['client_name']) ?></span>
+                        <?php if ($group): ?>
+                            | Groupe: <?= htmlspecialchars($group) ?>
+                        <?php endif; ?>
+                    </div>
+                    <?php if ($date): ?>
+                        <div class="france-victim-date"><?= htmlspecialchars($date) ?></div>
+                    <?php endif; ?>
+                </div>
+            <?php endforeach; ?>
+        <?php else: ?>
+            <div class="france-victim-item" style="text-align: center; color: #999;">
+                Aucune victime récente en France
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
 <div class="container">
     <h1>Ajout de patterns client</h1>
     <form method="post" style="margin-bottom:20px;display:inline;">
