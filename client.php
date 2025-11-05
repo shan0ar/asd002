@@ -63,7 +63,8 @@ $scan_tools = [
     'dig_txt' => 'DIG_TXT',
     'dig_a' => 'DIG_A',
     'whatweb' => 'Whatweb/Nuclei',
-    'nmap' => 'Nmap'
+    'nmap' => 'Nmap',
+    'dork' => 'Dork'
 ];
 
 // Enregistrement paramètres assets/outils
@@ -178,7 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $scan_id = $stmt->fetchColumn();
 
     // Récupère l'asset principal (ou adapte si plusieurs)
-    $stmt2 = $db->prepare("SELECT asset FROM assets WHERE client_id=? LIMIT 1");
+    $stmt2 = $db->prepare("SELECT asset_value FROM client_assets WHERE client_id=? LIMIT 1");
     $stmt2->execute([$client_id]);
     $asset = $stmt2->fetchColumn();
 
@@ -1060,6 +1061,37 @@ if ($whois_rows && count($whois_rows)) {
                 }
                 echo "</table>";
             }
+
+$dork_stmt = $db->prepare("SELECT * FROM dork_results WHERE scan_id=? ORDER BY id ASC");
+$dork_stmt->execute([$scan_id]);
+$dork_rows = $dork_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+if ($dork_rows && count($dork_rows)) {
+    echo "<h3>Résultats Google Dork</h3>
+    <table class='data'><tr>
+        <th>#</th>
+        <th>Domain</th>
+        <th>Type</th>
+        <th>Titre</th>
+        <th>URL</th>
+        <th>Date</th>
+    </tr>";
+    $i = 1;
+    foreach ($dork_rows as $row) {
+        echo "<tr>
+            <td>{$i}</td>
+            <td>".htmlspecialchars($row['domain'])."</td>
+            <td>".htmlspecialchars($row['filetype'])."</td>
+            <td>".htmlspecialchars($row['title'])."</td>
+            <td><a href=\"".htmlspecialchars($row['link'])."\" target=\"_blank\">".htmlspecialchars($row['link'])."</a></td>
+            <td>".htmlspecialchars($row['found_at'])."</td>
+        </tr>";
+        $i++;
+    }
+    echo "</table>";
+} else {
+    echo "<div style='color:#888;'>Aucun résultat Dork pour ce scan.</div>";
+}
 
             $stmt = $db->prepare("SELECT bruteforce_attempts FROM scans WHERE id=?");
             $stmt->execute([$scan_id]);
