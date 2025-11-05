@@ -115,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['brute_count'])) {
         $ins->execute([$id, $new_brute_count]);
     }
     $brute_count = $new_brute_count;
-    echo "<div style='color:green;font-weight:bold'>Nombre de tentatives bruteforce enregistré : $brute_count</div>";
+    echo "<div style='color:green;font-weight:bold'>Nombre de tentatives bruteforce enregistré : $brute_count</div>";
 }
 
 // Enregistrement de la planification personnalisée
@@ -166,6 +166,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
     $db->prepare("UPDATE scans SET status='done' WHERE id=?")->execute([$scan_id]);
     header("Location: client.php?id=$id&just_launched=$scan_id");
+    exit;
+}
+
+// Lancer un scan dork
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'launch_dork_scan') {
+    $client_id = (int)$_POST['client_id'];
+    // Crée un nouveau scan et récupère l'id du scan
+    $stmt = $db->prepare("INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, now(), false, 'running') RETURNING id");
+    $stmt->execute([$client_id]);
+    $scan_id = $stmt->fetchColumn();
+
+    // Récupère l'asset principal (ou adapte si plusieurs)
+    $stmt2 = $db->prepare("SELECT asset FROM assets WHERE client_id=? LIMIT 1");
+    $stmt2->execute([$client_id]);
+    $asset = $stmt2->fetchColumn();
+
+    // Lance le scan dork (adapter le chemin si nécessaire)
+    $cmd = escapeshellcmd("/var/www/html/asd002/scripts/scan_dork.sh") . " " .
+           escapeshellarg($asset) . " " .
+           escapeshellarg($scan_id) . " > /dev/null 2>&1 &";
+    exec($cmd);
+
+    header("Location: client.php?id=$client_id&just_launched_dork=$scan_id");
     exit;
 }
 
@@ -415,7 +438,7 @@ try {
     $blacklistStmt = $db->prepare("SELECT value FROM cti_blacklist WHERE type='victim' AND client_id = ?");
     $blacklistStmt->execute([$id]);
     $blacklisted_patterns = $blacklistStmt->fetchAll(PDO::FETCH_COLUMN);
-    
+
     // Compte les résultats non blacklistés
     if (empty($blacklisted_patterns)) {
         $ctiCountStmt = $db->prepare("SELECT COUNT(*) FROM cti_results WHERE client_id = ?");
@@ -502,8 +525,8 @@ function formatDateTime($s) {
                         <th>Pattern</th>
                         <th>Titre</th>
                         <th>Group</th>
-                        <th>Date découverte</th>
-                        <th>Date publication</th>
+                        <th>Date de publication</th>
+                        <th>Date de l'attaque</th>
                         <th>Screenshot</th>
                         <th>Permalink</th>
                     </tr>
@@ -761,6 +784,14 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         <input type="hidden" name="action" value="scan_now">
         <button type="submit">Lancer un scan maintenant</button>
     </form>
+<form method="post" style="display:inline;">
+  <input type="hidden" name="action" value="launch_dork_scan">
+  <input type="hidden" name="client_id" value="<?= htmlspecialchars($client['id']) ?>">
+  <button type="submit" class="btn btn-sm btn-warning">
+    Lancer un scan Dork
+  </button>
+</form>
+
     <?php
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
     $day = isset($_GET['day']) ? intval($_GET['day']) : null;
