@@ -170,28 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit;
 }
 
-// Lancer un scan dork
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'launch_dork_scan') {
-    $client_id = (int)$_POST['client_id'];
-    // Crée un nouveau scan et récupère l'id du scan
-    $stmt = $db->prepare("INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, now(), false, 'running') RETURNING id");
-    $stmt->execute([$client_id]);
-    $scan_id = $stmt->fetchColumn();
 
-    // Récupère l'asset principal (ou adapte si plusieurs)
-    $stmt2 = $db->prepare("SELECT asset_value FROM client_assets WHERE client_id=? LIMIT 1");
-    $stmt2->execute([$client_id]);
-    $asset = $stmt2->fetchColumn();
-
-    // Lance le scan dork (adapter le chemin si nécessaire)
-    $cmd = escapeshellcmd("/var/www/html/asd002/scripts/scan_dork.sh") . " " .
-           escapeshellarg($asset) . " " .
-           escapeshellarg($scan_id) . " > /dev/null 2>&1 &";
-    exec($cmd);
-
-    header("Location: client.php?id=$client_id&just_launched_dork=$scan_id");
-    exit;
-}
 
 // Liste des scans pour calendrier
 $scans = $db->prepare("SELECT id, scan_date, status FROM scans WHERE client_id=? ORDER BY scan_date ASC");
@@ -785,13 +764,6 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         <input type="hidden" name="action" value="scan_now">
         <button type="submit">Lancer un scan maintenant</button>
     </form>
-<form method="post" style="display:inline;">
-  <input type="hidden" name="action" value="launch_dork_scan">
-  <input type="hidden" name="client_id" value="<?= htmlspecialchars($client['id']) ?>">
-  <button type="submit" class="btn btn-sm btn-warning">
-    Lancer un scan Dork
-  </button>
-</form>
 
     <?php
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
