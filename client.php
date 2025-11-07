@@ -367,48 +367,104 @@ if (isset($_GET['action']) && $_GET['action'] === 'add_asset' && $_SERVER['REQUE
     <div class="current-datetime">
         Date/heure actuelle : <b><?=$date_now?></b>
     </div>
-    <h1>Calendrier des scans</h1>
-    <form method="get" style="margin-bottom:1em;">
+    <h1 style="color:#5b6dfe;margin-bottom:16px;font-size:2em;">Calendrier des scans</h1>
+<?php
+$mois_fr = [1=>"Janvier",2=>"Février",3=>"Mars",4=>"Avril",5=>"Mai",6=>"Juin",7=>"Juillet",8=>"Août",9=>"Septembre",10=>"Octobre",11=>"Novembre",12=>"Décembre"];
+$prevYear = $year - 1;
+$nextYear = $year + 1;
+$prevMonth = $month - 1;
+$nextMonth = $month + 1;
+$prevMonthYear = $year;
+$nextMonthYear = $year;
+if ($prevMonth < 1) { $prevMonth = 12; $prevMonthYear--; }
+if ($nextMonth > 12) { $nextMonth = 1; $nextMonthYear++; }
+?>
+<div style="display:flex;align-items:center;gap:60px;margin-bottom:14px;">
+  <div style="display:flex;flex-direction:column;">
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:0;">
+      <!-- Flèche année - -->
+      <form method="get" style="margin:0;display:inline;">
         <input type="hidden" name="id" value="<?=$id?>">
-        Mois: <select name="month">
-            <?php for($m=1;$m<=12;$m++): ?>
-                <option value="<?=$m?>"<?=$m==$month?' selected':''?>><?=date('F',mktime(0,0,0,$m,1))?></option>
-            <?php endfor ?>
-        </select>
-        Année: <select name="year">
-            <?php for($y=$year-2;$y<=$year+2;$y++): ?>
-                <option value="<?=$y?>"<?=$y==$year?' selected':''?>><?=$y?></option>
-            <?php endfor ?>
-        </select>
-        <button type="submit">Changer</button>
-    </form>
-    <table class="calendar">
-        <tr>
-            <?php foreach(['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'] as $d): ?>
-                <th><?=$d?></th>
-            <?php endforeach ?>
-        </tr>
-        <tr>
-        <?php
-        $d = 1;
-        $cell = 1;
-        for($i=1;$i<$startDay;$i++): ?><td></td><?php $cell++; endfor;
-        for($i=1;$i<=$daysInMonth;$i++,$cell++):
-            $date = sprintf('%04d-%02d-%02d', $year, $month, $i);
-            $style = '';
-            if (isset($scan_days[$date])) {
-                $status = $scan_days[$date];
-                if ($status == 'running') $style = ' style="background:#ffe39c"';
-                elseif ($status == 'done') $style = ' style="background:#aee"';
-                elseif ($status == 'pending') $style = ' style="background:#add8e6"';
-            }
-            echo "<td$style><a href='client.php?id=$id&year=$year&month=$month&day=$i'>$i</a></td>";
-            if ($cell%7==0) echo "</tr><tr>";
-        endfor;
-        for(;$cell%7!=1;$cell++): ?><td></td><?php endfor;
-        ?>
-        </tr>
-    </table>
+        <input type="hidden" name="year" value="<?=$prevYear?>">
+        <input type="hidden" name="month" value="<?=$month?>">
+        <button type="submit" style="background:none;border:none;cursor:pointer;width:30px;padding:0 4px;">
+          <span style="font-size:1.6em;color:#727fff;">&#60;</span>
+        </button>
+      </form>
+      <span style="font-size:1.35em;font-weight:600;min-width:72px;text-align:center;"><?=$year?></span>
+      <!-- Flèche année + -->
+      <form method="get" style="margin:0;display:inline;">
+        <input type="hidden" name="id" value="<?=$id?>">
+        <input type="hidden" name="year" value="<?=$nextYear?>">
+        <input type="hidden" name="month" value="<?=$month?>">
+        <button type="submit" style="background:none;border:none;cursor:pointer;width:30px;padding:0 4px;">
+          <span style="font-size:1.6em;color:#727fff;">&#62;</span>
+        </button>
+      </form>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;">
+      <!-- Flèche mois - -->
+      <form method="get" style="margin:0;display:inline;">
+        <input type="hidden" name="id" value="<?=$id?>">
+        <input type="hidden" name="year" value="<?=$prevMonthYear?>">
+        <input type="hidden" name="month" value="<?=$prevMonth?>">
+        <button type="submit" style="background:none;border:none;cursor:pointer;width:30px;padding:0 4px;">
+          <span style="font-size:1.6em;color:#727fff;">&#60;</span>
+        </button>
+      </form>
+      <span style="font-size:1.2em;font-weight:500;min-width:110px;text-align:center;"><?=$mois_fr[$month]?></span>
+      <!-- Flèche mois + -->
+      <form method="get" style="margin:0;display:inline;">
+        <input type="hidden" name="id" value="<?=$id?>">
+        <input type="hidden" name="year" value="<?=$nextMonthYear?>">
+        <input type="hidden" name="month" value="<?=$nextMonth?>">
+        <button type="submit" style="background:none;border:none;cursor:pointer;width:30px;padding:0 4px;">
+          <span style="font-size:1.6em;color:#727fff;">&#62;</span>
+        </button>
+      </form>
+    </div>
+  </div>
+  <div style="flex:1;">
+    <!-- Tu peux ajouter ici tes sélecteurs/exports/liens, etc. -->
+  </div>
+</div>
+
+<style>
+.custom-calendar { background:#fff;border-radius:16px;padding:14px 13px;box-shadow:0 2px 14px #a5b6e630;display:inline-block;}
+.custom-calendar th { color:#7d8eb3;background:#f2f4fa;font-weight:600;padding:5px 8px;border-radius:8px 8px 0 0;}
+.custom-calendar td { text-align:center;padding:0;margin:0; }
+.custom-calendar a { display:inline-block;width:34px;height:34px;line-height:34px;border-radius:8px;text-decoration:none;color:#345;text-align:center;transition:0.13s; }
+.custom-calendar .today { background:#e4f3ff;border:2px solid #43aef7;color:#057;font-weight:600; }
+.custom-calendar .scan-done { background:#d7f8e6;color:#167a3a;font-weight:700;border:1.5px solid #80c7b6; }
+.custom-calendar .scan-running { background:#fff4c3;color:#d48a09;border:1.5px solid #ffd26a;}
+.custom-calendar .scan-pending { background:#e5e9fa;color:#222;border:1.5px solid #b7c9eb;}
+</style>
+<table class="custom-calendar">
+  <tr>
+    <?php foreach(['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'] as $d): ?>
+      <th><?=$d?></th>
+    <?php endforeach ?>
+  </tr>
+  <tr>
+  <?php
+  $today = date('Y-m-d');
+  $cell = 1;
+  for($i=1;$i<$startDay;$i++): ?><td></td><?php $cell++; endfor;
+  for($i=1;$i<=$daysInMonth;$i++,$cell++):
+      $date = sprintf('%04d-%02d-%02d', $year, $month, $i);
+      $classes = [];
+      if ($date==$today)     $classes[] = "today";
+      if (isset($scan_days[$date]) && $scan_days[$date]=='done')     $classes[] = "scan-done";
+      if (isset($scan_days[$date]) && $scan_days[$date]=='running')  $classes[] = "scan-running";
+      if (isset($scan_days[$date]) && $scan_days[$date]=='pending')  $classes[] = "scan-pending";
+      $cl = count($classes) ? ' class="'.implode(' ',$classes).'"' : '';
+      echo "<td$cl><a href='client.php?id=$id&year=$year&month=$month&day=$i'>$i</a></td>";
+      if ($cell%7==0) echo "</tr><tr>";
+  endfor;
+  for(;$cell%7!=1;$cell++): ?><td></td><?php endfor;
+  ?>
+  </tr>
+</table>
 
 <?php
 // --- Aperçu CTI pour le client (à insérer dans client.php, avant asset-settings-frame) ---
