@@ -124,9 +124,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['frequency'])) {
     $freq = $_POST['frequency'];
     $day = isset($_POST['day_of_week']) ? intval($_POST['day_of_week']) : null;
     $time = $_POST['time'] ?? '00:00:00';
-    $next_run = (isset($_POST['custom_date']) && $_POST['custom_date'] && isset($_POST['custom_time']) && $_POST['custom_time'])
-        ? ($_POST['custom_date'] . ' ' . $_POST['custom_time'])
-        : null;
+    
+    // Check if custom date/time is provided (priority)
+    if (isset($_POST['custom_date']) && $_POST['custom_date'] && isset($_POST['custom_time']) && $_POST['custom_time']) {
+        $next_run = $_POST['custom_date'] . ' ' . $_POST['custom_time'] . ':00';
+    } else {
+        // Calculate next_run based on frequency and parameters
+        $next_run = calculateNextRun($freq, $day, $time);
+    }
+    
     if ($schedule) {
         $stmt = $db->prepare("UPDATE scan_schedules SET frequency=?, day_of_week=?, time=?, next_run=? WHERE client_id=?");
         $stmt->execute([$freq, $day, $time, $next_run, $id]);
@@ -785,6 +791,14 @@ function formatDateTime($s) {
 
 
     <h2>Planification des scans</h2>
+    
+    <?php if ($schedule && $schedule['next_run']): ?>
+    <div style="background:#e8f5e9;border:1px solid #4caf50;padding:12px;border-radius:6px;margin-bottom:16px;">
+        <strong>Prochaine exécution planifiée :</strong> 
+        <span style="color:#2e7d32;font-weight:600;"><?=htmlspecialchars($schedule['next_run'])?></span>
+    </div>
+    <?php endif; ?>
+    
     <form method="post">
         <label>Fréquence des scans :
             <?php
