@@ -10,8 +10,62 @@ if ($client_id <= 0 || !$date) {
 }
 
 // --- Remplace "XXXXXX" par ton base64 réel (sans préfixe data:) ---
-$logo_base64 = 'XXXXXX';
+$logo_base64 = 'iVBORw0KGgoAAAANSUhEUgAABAAAAAG6CAMAAAChqsQFAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAC9FBMVEVHcEwAAFpQluYAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFpQluZQluYAAFoAAFoAAFpQluYAAFpQluZQluYAAFoAAFoAAFpQluYAAFpQluYAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFpQluZQluYAAFoAAFoAAFpQluYAAFoAAFoAAFpQluYAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFpQluYAAFoAAFoAAFoAAFoAAFpQluYAAFoAAFoAAFpQluYAAFoAAFoAAFpQluYAAFpQluYAAFoAAFpQluYAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFpQluYAAFoAAFoAAFpQluYAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFpQluYAAFoAAFoAAFpQluYAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFoAAFpQluZQluYAAFpQluYAAFoAAFpQluZQluZQluYAAFpQluZQluZQluYAAFoAAFpQluZQluZQluYAAFpQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluYAAFpQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluZQluYAAFpQlub63OAZAAAA+nRSTlMA9Sge+2KRAgzv/Qbtp5kS8Vb5LpmJuzbZBGwYKO9QFPNM680gszAsn+H3CP08zxACevEKKhblJhjD59/jtRIapWQErTg+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';
 $logo_data = 'data:image/png;base64,' . $logo_base64;
+
+/*
+  v22-extension : bloc de configuration pour moduler facilement les éléments
+  de la page de garde (positions / tailles en "pt").
+  - Modifier ces valeurs n'affecte pas la structure du reste du fichier (TOC, sections, tableaux).
+  - Les left_pt / top_pt sont maintenant interprétés depuis le bord papier (le script ajoute l'offset des marges).
+*/
+$COVER_CONFIG = [
+    'dark_square' => [
+        'left_pt'  => null,   // si défini, positionne depuis la gauche du papier (plus fiable)
+        'right_pt' => -81,     // sinon positionne depuis la droite du papier (comportement v22 original)
+        'top_pt'   => -142,
+        'width_pt' => 256,
+        'height_pt'=> 256,
+        'color'    => '#05124d',
+    ],
+    'logo_frame' => [
+        'left_pt'  => -81,
+        'top_pt'   => -142,
+        'width_pt' => 320,
+        'height_pt'=> 256,
+        'border_color' => '#5aa0ff',
+    ],
+    'big_title' => [
+        'left_pt'  => -81,
+        'top_pt'   => 115,
+        'width_pt' => 285,
+        'height_pt'=> 350,
+        'bg_color' => '#5aa0ff',
+        'title_font_size_pt' => 28,
+    ],
+    'client_box' => [
+        'left_pt'  => 280,
+        'top_pt'   => 226,
+        'width_pt' => 200,
+        'height_pt'=> 78,
+        'border_color' => '#5aa0ff',
+    ],
+    'bottom_decor' => [
+        'left_pt' => 90,
+        'bottom_pt' => -90,
+        'long_strip_width_pt' => 18,
+        'long_strip_height_pt' => 18,
+        'small_light_left_offset_pt' => -90,
+        'small_light_top_offset_pt' => -16,
+        'small_light_width_pt' => 90,
+        'small_light_height_pt' => 18,
+        'small_dark_left_offset_pt' => 55,
+        'small_dark_top_offset_pt' => -40,
+        'small_dark_size_pt' => 16,
+        'light_color' => '#5aa0ff',
+        'dark_color' => '#05124d',
+    ],
+];
 
 // Helper to format dates into DD/MM/YYYY (ignore time). Returns empty string if invalid.
 function fmt_date_day($val) {
@@ -256,18 +310,71 @@ $sections = [
 // Construction du rapport HTML
 // ---------------------------------------------------- //
 
-// ---- Cover page simplified ----
-$cover = '<div style="height:100%;padding:40pt;">';
-$cover .= '<div style="position:absolute;top:40pt;right:40pt;width:96pt;height:96pt;background:#05124d;"></div>';
-$cover .= '<div style="margin-top:140pt;width:420pt;border:4pt solid #5aa0ff;padding:12pt;"><img src="'.htmlspecialchars($logo_data).'" style="max-height:86px;"></div>';
-$cover .= '<div style="margin-top:24pt;width:420pt;background:#5aa0ff;padding:22pt 24pt;color:#fff;"><h1 style="margin:0;font-size:28pt;">Rapport d\'audit</h1><p style="margin-top:12pt;font-size:12pt;color:#eef6ff;">Audit d\'exposition</p></div>';
-$cover .= '<div style="margin-top:18pt;width:200pt;border:4pt solid #5aa0ff;padding:10pt;color:#1a66c9;font-weight:700;">'.htmlspecialchars($clientName).'</div>';
-$cover .= '<div style="position:absolute;left:72pt;bottom:48pt;width:480pt;height:16pt;background:#05124d;"></div>';
-$cover .= '<div style="position:absolute;left:72pt;bottom:60pt;width:40pt;height:12pt;background:#5aa0ff;"></div>';
-$cover .= '<div style="position:absolute;left:116pt;bottom:64pt;width:16pt;height:16pt;background:#05124d;"></div>';
+// ---- Cover page : POSITIONNABLE (remplacement précis pour v22) ----
+// Convertisseur mm -> pt (1 mm = 2.83464567 pt)
+function mm2pt($mm) { return $mm * 2.83464567; }
+
+// marges de page v22 en mm, converties en pt
+$page_margin_left_pt  = mm2pt(15);
+$page_margin_right_pt = mm2pt(15);
+$page_margin_top_pt   = mm2pt(26);
+$page_margin_bottom_pt= mm2pt(18);
+
+// récupère la config
+$dark = $COVER_CONFIG['dark_square'];
+$logoF = $COVER_CONFIG['logo_frame'];
+$big   = $COVER_CONFIG['big_title'];
+$cb    = $COVER_CONFIG['client_box'];
+$bd    = $COVER_CONFIG['bottom_decor'];
+
+// construction du cover en position:fixed (mPDF respecte position fixe par rapport à la page/marges)
+$cover = '';
+
+// carré bleu foncé
+if (!empty($dark['left_pt'])) {
+    $css_left = $page_margin_left_pt + (float)$dark['left_pt'];
+    $css_top  = $page_margin_top_pt  + (float)$dark['top_pt'];
+    $cover .= '<div style="position:fixed; left:'.htmlspecialchars($css_left).'pt; top:'.htmlspecialchars($css_top).'pt; width:'.htmlspecialchars((float)$dark['width_pt']).'pt; height:'.htmlspecialchars((float)$dark['height_pt']).'pt; background:'.htmlspecialchars($dark['color']).';"></div>';
+} else {
+    $css_right = $page_margin_right_pt + (float)($dark['right_pt'] ?? 0);
+    $css_top   = $page_margin_top_pt   + (float)$dark['top_pt'];
+    $cover .= '<div style="position:fixed; right:'.htmlspecialchars($css_right).'pt; top:'.htmlspecialchars($css_top).'pt; width:'.htmlspecialchars((float)$dark['width_pt']).'pt; height:'.htmlspecialchars((float)$dark['height_pt']).'pt; background:'.htmlspecialchars($dark['color']).';"></div>';
+}
+
+// cadre logo
+$css_left_logo = $page_margin_left_pt + (float)$logoF['left_pt'];
+$css_top_logo  = $page_margin_top_pt  + (float)$logoF['top_pt'];
+$imgMaxHeight = max(0, (float)$logoF['height_pt'] - ((float)$logoF['padding_pt'] * 2));
+$cover .= '<div style="position:fixed; left:'.htmlspecialchars($css_left_logo).'pt; top:'.htmlspecialchars($css_top_logo).'pt; width:'.htmlspecialchars((float)$logoF['width_pt']).'pt; height:'.htmlspecialchars((float)$logoF['height_pt']).'pt; border:4pt solid '.htmlspecialchars($logoF['border_color']).'; box-sizing:border-box; display:flex; align-items:center; justify-content:center; padding:'.htmlspecialchars((float)$logoF['padding_pt']).'pt; background:#fff;">';
+$cover .= '<img src="'.htmlspecialchars($logo_data).'" style="max-height:'.htmlspecialchars($imgMaxHeight).'px; max-width:100%;">';
 $cover .= '</div>';
+
+// grand rectangle bleu clair
+$css_left_big = $page_margin_left_pt + (float)$big['left_pt'];
+$css_top_big  = $page_margin_top_pt  + (float)$big['top_pt'];
+$cover .= '<div style="position:fixed; left:'.htmlspecialchars($css_left_big).'pt; top:'.htmlspecialchars($css_top_big).'pt; width:'.htmlspecialchars((float)$big['width_pt']).'pt; height:'.htmlspecialchars((float)$big['height_pt']).'pt; background:'.htmlspecialchars($big['bg_color']).'; color:#fff; padding:22pt 24pt; box-sizing:border-box;">';
+$cover .= '<h1 style="margin:0;font-size:'.htmlspecialchars((float)$big['title_font_size_pt']).'pt;font-weight:800;">Rapport d\'audit</h1>';
+$cover .= '<p style="margin-top:12pt;font-size:12pt;color:#eef6ff;">Audit d\'exposition</p>';
+$cover .= '</div>';
+
+// boîte client encadrée
+$css_left_cb = $page_margin_left_pt + (float)$cb['left_pt'];
+$css_top_cb  = $page_margin_top_pt  + (float)$cb['top_pt'];
+$cover .= '<div style="position:fixed; left:'.htmlspecialchars($css_left_cb).'pt; top:'.htmlspecialchars($css_top_cb).'pt; width:'.htmlspecialchars((float)$cb['width_pt']).'pt; height:'.htmlspecialchars((float)$cb['height_pt']).'pt; border:4pt solid '.htmlspecialchars($cb['border_color']).'; display:flex; align-items:center; justify-content:center; box-sizing:border-box; background:#fff; color:#1a66c9; font-weight:700;">';
+$cover .= htmlspecialchars($clientName);
+$cover .= '</div>';
+
+// décor bas
+$css_left_bd = $page_margin_left_pt + (float)$bd['left_pt'];
+$css_bottom_bd = $page_margin_bottom_pt + (float)$bd['bottom_pt'];
+$cover .= '<div style="position:fixed; left:'.htmlspecialchars($css_left_bd).'pt; bottom:'.htmlspecialchars($css_bottom_bd).'pt; width:'.htmlspecialchars((float)$bd['long_strip_width_pt']).'pt; height:'.htmlspecialchars((float)$bd['long_strip_height_pt']).'pt; background:'.htmlspecialchars($bd['dark_color']).';"></div>';
+$cover .= '<div style="position:fixed; left:'.htmlspecialchars($css_left_bd + $bd['small_light_left_offset_pt']).'pt; bottom:'.htmlspecialchars($css_bottom_bd + $bd['small_light_top_offset_pt']).'pt; width:'.htmlspecialchars((float)$bd['small_light_width_pt']).'pt; height:'.htmlspecialchars((float)$bd['small_light_height_pt']).'pt; background:'.htmlspecialchars($bd['light_color']).';"></div>';
+$cover .= '<div style="position:fixed; left:'.htmlspecialchars($css_left_bd + $bd['small_dark_left_offset_pt']).'pt; bottom:'.htmlspecialchars($css_bottom_bd + $bd['small_dark_top_offset_pt']).'pt; width:'.htmlspecialchars((float)$bd['small_dark_size_pt']).'pt; height:'.htmlspecialchars((float)$bd['small_dark_size_pt']).'pt; background:'.htmlspecialchars($bd['dark_color']).';"></div>';
+
+// pagebreak to start content after cover
+$cover .= '<pagebreak />';
+
 $rapport = $cover;
-$rapport .= '<pagebreak />';
 
 // Header for following pages
 $rapport .= '<div class="header-client">';
@@ -281,7 +388,8 @@ $rapport .= '</div>';
 $rapport .= $victime_html;
 
 // Intro (use desc-box for a professional framed description)
-$rapport .= '<div class="desc-box">Ce rapport présente les informations-clés collectées lors de la dernière analyse de sécurité, par OSINT et reconnaissance technique. Il permet d’obtenir une vision synthétique, exhaustive et professionnelle de la surface exposée sur Internet, pour le client <b>'.htmlspecialchars($clientName).'</b>. Les tableaux sont conçus pour fournir un accès rapide à chaque type de donnée critique, utile pour la gestion des risques et la remédiation.</div>';
+$rapport .= '<div class="desc-box">Ce rapport présente les informations-clés collectées lors de la dernière analyse de sécurité, par OSINT et reconnaissance technique. Il permet d’obtenir une vision synthétique, exhaustive et professionnelle de la surface exposée sur Internet, pour le client <b>'.htmlspecialchars($clientName).'</b>. Les tableaux sont conçus pour fournir un accès rapide à chaque type de donnée critique, utile pour la gestion des risques et la remédiation.
+</div>';
 
 // --------- TOC: header then automatic TOC (clickable) ---------
 $toc_header = "<div class='toc-hd'>Sommaire</div>";
@@ -315,7 +423,7 @@ foreach ($sections as $section) {
 
     // Section content
     if ($section['id'] === 'whois') {
-        $rapport .= '<div class="desc-box">Ce tableau regroupe les informations d’enregistrement des domaines identifiés, issues des bases WHOIS : registraire, propriétaire, pays, dates importantes, et serveurs DNS associés.</div>';
+        $rapport .= '<div class="desc-box">Ce tableau regroupe les informations d’enregistrement des domaines identifiés, issues des bases WHOIS : registraire, propriétaire, pays, dates importantes, et serveurs DNS associés.</div>';
         $rapport .= '<div class="table-wrap"><table class="table-audit"><tr>
             <th>Domaine</th><th>Registraire</th><th>Propriétaire</th><th>Pays</th><th>Création</th><th>Expiration</th><th>Serveurs DNS</th>
             </tr>';
@@ -374,7 +482,7 @@ foreach ($sections as $section) {
         }
         $rapport .= '</table></div>';
     } elseif ($section['id'] === 'nmap') {
-        $rapport .= '<div class="desc-box">Ce tableau regroupe pour chaque asset les ports ouverts détectés, associés aux services actifs et à leur version.</div>';
+        $rapport .= '<div class="desc-box">Ports ouverts et services détectés par Nmap.</div>';
         $rapport .= '<div class="table-wrap"><table class="table-audit small-table"><tr><th>Asset</th><th>Port</th><th>Service</th><th>Version</th></tr>';
         foreach ($nmap as $n) {
             $rapport .= '<tr>
