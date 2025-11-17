@@ -102,16 +102,43 @@ $current_page = basename($_SERVER['PHP_SELF']);
   color: #fff;
 }
 
-/* Clients bloc */
-.sidebar-asd-section-title {
-  padding: 0 0 3px 28px;
-  margin: 14px 0 0 0;
-  font-size: 1.05em;
+.sidebar-asd-accordion-title {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
   color: #e1e4e8;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  font-size: 1.05em;
+  padding: 9px 0 9px 28px;
+  cursor: pointer;
+  outline: none;
+  position: relative;
   user-select: none;
+  transition: background 0.15s;
+  margin: 0;
 }
+.sidebar-asd-accordion-title .arrow {
+  display: inline-block;
+  margin-right: 8px;
+  transition: transform 0.19s;
+}
+.sidebar-asd-accordion-title.expanded .arrow {
+  transform: rotate(90deg);
+}
+.sidebar-asd-accordion-content {
+  max-height: 777px;
+  overflow: hidden;
+  transition: max-height 0.23s cubic-bezier(.4,0,.2,1);
+  padding-bottom: 3px;
+}
+.sidebar-asd-accordion-content.collapsed {
+  max-height: 0;
+  padding: 0;
+  overflow: hidden;
+  transition: max-height 0.19s cubic-bezier(.4,0,.2,1);
+}
+
 .sidebar-asd-search {
   padding: 0 15px 0 28px;
   margin-top: 6px;
@@ -163,6 +190,8 @@ $current_page = basename($_SERVER['PHP_SELF']);
   cursor: pointer;
   transition: background 0.16s;
   display: block;
+  text-align: left;
+  font-family: inherit;
 }
 .sidebar-asd-create-btn:hover {
   background: #188c50;
@@ -187,10 +216,11 @@ $current_page = basename($_SERVER['PHP_SELF']);
 /* Hide text in collapsed mode, only show icons/buttons (if you add any) */
 .sidebar-asd-collapsed .sidebar-asd-header,
 .sidebar-asd-collapsed .sidebar-asd-menu a,
-.sidebar-asd-collapsed .sidebar-asd-section-title,
+.sidebar-asd-collapsed .sidebar-asd-accordion-title,
 .sidebar-asd-collapsed .sidebar-asd-search,
 .sidebar-asd-collapsed .sidebar-asd-client,
 .sidebar-asd-collapsed .sidebar-asd-create-btn,
+.sidebar-asd-collapsed .sidebar-asd-plan-btn,
 .sidebar-asd-collapsed .sidebar-asd-logout {
   opacity: 0;
   pointer-events: none;
@@ -226,28 +256,46 @@ $current_page = basename($_SERVER['PHP_SELF']);
   <div class="sidebar-asd-menu">
     <a href="index.php" class="<?=basename($_SERVER['PHP_SELF']) === 'index.php' ? 'active' : ''?>">Accueil</a>
   </div>
-  <div class="sidebar-asd-section-title">Clients</div>
-  <div class="sidebar-asd-search">
-    <input type="text" id="sidebar-search-input" placeholder="Rechercher un client..." autocomplete="off" />
+
+  <!-- Rapports Accordion -->
+  <button class="sidebar-asd-accordion-title" id="rapports-title" type="button">
+    <span class="arrow">&#8250;</span> Rapports
+  </button>
+  <div class="sidebar-asd-accordion-content" id="rapports-content">
+    <div class="sidebar-asd-search">
+      <input type="text" id="sidebar-search-input" placeholder="Rechercher un client..." autocomplete="off" />
+    </div>
+    <div class="sidebar-asd-clients" id="sidebar-clients">
+      <?php foreach($clients as $client):
+        $is_active = ($current_page === 'client.php' && $current_client_id == $client['id']);
+      ?>
+        <a href="client.php?id=<?=$client['id']?>"
+           class="sidebar-asd-client<?= $is_active ? ' active-client' : '' ?>"
+           data-client="<?=strtolower($client['name'])?>">
+          <?=htmlspecialchars($client['name'])?>
+        </a>
+      <?php endforeach; ?>
+      <?php if(empty($clients)): ?>
+        <span style="color:#bbb;font-size:0.97em; padding-left:28px;">Aucun client</span>
+      <?php endif; ?>
+    </div>
   </div>
-  <button class="sidebar-asd-create-btn" onclick="window.location='create_client.php'">Créer un client</button>
-  <div class="sidebar-asd-clients" id="sidebar-clients">
-    <?php foreach($clients as $client):
-      // Si sur client.php et que c'est le client courant, on met la classe active-client
-      $is_active = ($current_page === 'client.php' && $current_client_id == $client['id']);
-    ?>
-      <a href="client.php?id=<?=$client['id']?>"
-         class="sidebar-asd-client<?= $is_active ? ' active-client' : '' ?>"
-         data-client="<?=strtolower($client['name'])?>">
-        <?=htmlspecialchars($client['name'])?>
-      </a>
-    <?php endforeach; ?>
-    <?php if(empty($clients)): ?>
-      <span style="color:#bbb;font-size:0.97em; padding-left:28px;">Aucun client</span>
-    <?php endif; ?>
+
+  <!-- Gestion Accordion -->
+  <button class="sidebar-asd-accordion-title" id="gestion-title" type="button">
+    <span class="arrow">&#8250;</span> Gestion
+  </button>
+  <div class="sidebar-asd-accordion-content" id="gestion-content">
+    <a href="create_client.php" class="sidebar-asd-client"
+       style="margin-bottom:10px; font-weight:600;">Créer un client</a>
+    <a href="planification.php" class="sidebar-asd-client"
+       style="margin-bottom:10px; font-weight:600;">Planification</a>
+    <!-- Ajoute d'autres liens de gestion ici -->
   </div>
+
   <a href="logout.php" class="sidebar-asd-logout">Déconnexion</a>
 </nav>
+
 <script>
 (function() {
   // Sidebar toggle
@@ -261,27 +309,57 @@ $current_page = basename($_SERVER['PHP_SELF']);
     sidebar.classList.toggle('sidebar-asd-collapsed', collapsed);
     arrow.innerHTML = collapsed ? "&#8250;" : "&lt;";
     toggleBtn.title = collapsed ? "Déplier le menu" : "Réduire le menu";
-    // Décale le contenu principal (si présent)
     var main = document.querySelector('.main');
     if(main) {
       main.style.marginLeft = collapsed ? '54px' : '260px';
     }
   }
-  // Initial state
   setSidebarState(false);
 
   toggleBtn.onclick = function() {
     setSidebarState(!collapsed);
   };
 
+  // Accordion logic
+  function accordionToggle(title, content) {
+    title.addEventListener('click', function() {
+      const expanded = !content.classList.contains('collapsed');
+      document.querySelectorAll('.sidebar-asd-accordion-title').forEach(btn => btn.classList.remove('expanded'));
+      document.querySelectorAll('.sidebar-asd-accordion-content').forEach(div => div.classList.add('collapsed'));
+      if (expanded) {
+        // collapse this section
+        content.classList.add('collapsed');
+        title.classList.remove('expanded');
+      } else {
+        // expand this section
+        content.classList.remove('collapsed');
+        title.classList.add('expanded');
+      }
+    });
+  }
+
+  const rapportsTitle = document.getElementById('rapports-title');
+  const rapportsContent = document.getElementById('rapports-content');
+  const gestionTitle = document.getElementById('gestion-title');
+  const gestionContent = document.getElementById('gestion-content');
+  // Start with rapports ouvert, gestion fermé
+  rapportsTitle.classList.add('expanded');
+  rapportsContent.classList.remove('collapsed');
+  gestionTitle.classList.remove('expanded');
+  gestionContent.classList.add('collapsed');
+  accordionToggle(rapportsTitle, rapportsContent);
+  accordionToggle(gestionTitle, gestionContent);
+
   // Barre de recherche : filtre les clients
   const searchInput = document.getElementById('sidebar-search-input');
   const clientLinks = document.querySelectorAll('.sidebar-asd-client');
-  searchInput && searchInput.addEventListener('input', function() {
-    const val = this.value.trim().toLowerCase();
-    clientLinks.forEach(function(link) {
-      link.style.display = (!val || link.dataset.client.includes(val)) ? "" : "none";
+  if (searchInput) {
+    searchInput.addEventListener('input', function() {
+      const val = this.value.trim().toLowerCase();
+      clientLinks.forEach(function(link) {
+        link.style.display = (!val || link.dataset.client.includes(val)) ? "" : "none";
+      });
     });
-  });
+  }
 })();
 </script>
