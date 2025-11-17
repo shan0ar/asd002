@@ -59,15 +59,18 @@ function calculateNextRun($frequency, $day_of_week, $time, $from_date = null) {
         case 'monthly':
             // Schedule for the same day of next month (or the last day if not available)
             $current_day_of_month = intval(date('d', $base));
+            $current_month = intval(date('m', $base));
+            $current_year = intval(date('Y', $base));
             $current_time = intval(date('H', $base)) * 3600 + intval(date('i', $base)) * 60 + intval(date('s', $base));
             $target_time = $hour * 3600 + $minute * 60 + $second;
             
-            // Start with current month
-            $next_month = intval(date('m', $base));
-            $next_year = intval(date('Y', $base));
+            // Start with next month
+            $next_month = $current_month;
+            $next_year = $current_year;
             
-            // Check if we need to go to next month
+            // Check if we need to move to next month (if time today hasn't passed yet, stay in current month)
             if ($current_time >= $target_time) {
+                // Time has passed today, go to next month
                 $next_month++;
                 if ($next_month > 12) {
                     $next_month = 1;
@@ -85,15 +88,17 @@ function calculateNextRun($frequency, $day_of_week, $time, $from_date = null) {
         case 'quarterly':
             // Every 3 months
             $current_day_of_month = intval(date('d', $base));
+            $current_month = intval(date('m', $base));
+            $current_year = intval(date('Y', $base));
             $current_time = intval(date('H', $base)) * 3600 + intval(date('i', $base)) * 60 + intval(date('s', $base));
             $target_time = $hour * 3600 + $minute * 60 + $second;
             
-            $next_month = intval(date('m', $base));
-            $next_year = intval(date('Y', $base));
+            $next_month = $current_month + 3;
+            $next_year = $current_year;
             
-            // Check if time has passed today
-            if ($current_time >= $target_time) {
-                $next_month += 3;
+            // Check if time has passed today - if not, use current quarter
+            if ($current_time < $target_time) {
+                $next_month = $current_month;
             }
             
             // Handle year overflow
@@ -112,15 +117,17 @@ function calculateNextRun($frequency, $day_of_week, $time, $from_date = null) {
         case 'semiannual':
             // Every 6 months
             $current_day_of_month = intval(date('d', $base));
+            $current_month = intval(date('m', $base));
+            $current_year = intval(date('Y', $base));
             $current_time = intval(date('H', $base)) * 3600 + intval(date('i', $base)) * 60 + intval(date('s', $base));
             $target_time = $hour * 3600 + $minute * 60 + $second;
             
-            $next_month = intval(date('m', $base));
-            $next_year = intval(date('Y', $base));
+            $next_month = $current_month + 6;
+            $next_year = $current_year;
             
-            // Check if time has passed today
-            if ($current_time >= $target_time) {
-                $next_month += 6;
+            // Check if time has passed today - if not, use current period
+            if ($current_time < $target_time) {
+                $next_month = $current_month;
             }
             
             // Handle year overflow
@@ -138,16 +145,20 @@ function calculateNextRun($frequency, $day_of_week, $time, $from_date = null) {
             
         case 'annual':
             // Once a year
-            $next_year = intval(date('Y', $base));
+            $current_year = intval(date('Y', $base));
+            $current_month = intval(date('m', $base));
+            $current_day = intval(date('d', $base));
             $current_time = intval(date('H', $base)) * 3600 + intval(date('i', $base)) * 60 + intval(date('s', $base));
             $target_time = $hour * 3600 + $minute * 60 + $second;
             
-            // Check if time has passed today
+            $next_year = $current_year;
+            
+            // Check if time has passed today - if not, use current year
             if ($current_time >= $target_time) {
                 $next_year++;
             }
             
-            $next = mktime($hour, $minute, $second, date('m', $base), date('d', $base), $next_year);
+            $next = mktime($hour, $minute, $second, $current_month, $current_day, $next_year);
             break;
             
         default:
