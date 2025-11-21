@@ -870,17 +870,19 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
 
         function updateButton() {
             btn.textContent = formatTime(remainingSeconds);
-            remainingSeconds--;
-            if (remainingSeconds < 0) {
+            if (remainingSeconds <= 0) {
                 // Temps écoulé, soumettre le formulaire
                 stopTimer();
                 form.submit();
+            } else {
+                remainingSeconds--;
             }
         }
 
         function startTimer() {
             remainingSeconds = DELAY_SECONDS;
-            updateButton(); // Afficher immédiatement 03:00
+            btn.textContent = formatTime(remainingSeconds); // Afficher immédiatement 03:00
+            remainingSeconds--;
             timerId = setInterval(updateButton, 1000);
         }
 
