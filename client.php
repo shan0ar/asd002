@@ -160,6 +160,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     foreach ($assets as $asset) {
         $asset_tools = $enabled_tools[$asset] ?? [];
         foreach ($asset_tools as $tool) {
+            // Whitelist validation to prevent command injection
+            $allowed_tools = ['whois', 'amass', 'dig_bruteforce', 'dig_mx', 'dig_txt', 'dig_a', 'whatweb', 'nmap', 'dork'];
+            if (!in_array($tool, $allowed_tools)) {
+                file_put_contents('/opt/asd002-logs/php_exec.log', date('c')." SECURITY: Invalid tool '$tool' rejected\n", FILE_APPEND);
+                continue;
+            }
+            
             $cmd = sprintf('bash /var/www/html/asd002/scripts/scan_%s.sh %s %d', $tool, escapeshellarg($asset), $scan_id);
             file_put_contents('/opt/asd002-logs/php_exec.log', date('c')." CMD: $cmd\n", FILE_APPEND);
             exec($cmd . ' >> /opt/asd002-logs/php_exec.log 2>&1');
@@ -167,6 +174,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
     $db->prepare("UPDATE scans SET status='done' WHERE id=?")->execute([$scan_id]);
     header("Location: client.php?id=$id&just_launched=$scan_id");
+    exit;
+}
+
+// Programmer un scan dans 3 minutes
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'schedule_scan_3min') {
+    // Vérifier s'il existe déjà un enregistrement dans scan_schedules pour ce client
+    $existing = $db->prepare("SELECT id FROM scan_schedules WHERE client_id=?");
+    $existing->execute([$id]);
+    $schedule_record = $existing->fetch(PDO::FETCH_ASSOC);
+    
+    if ($schedule_record) {
+        // Mettre à jour l'enregistrement existant avec la nouvelle next_run (calculé par la DB)
+        $stmt = $db->prepare("UPDATE scan_schedules SET next_run=NOW() + INTERVAL '3 minutes' WHERE client_id=? RETURNING next_run");
+        $stmt->execute([$id]);
+        $scheduled_time = $stmt->fetchColumn();
+    } else {
+        // Créer un nouvel enregistrement (calculé par la DB)
+        $stmt = $db->prepare("INSERT INTO scan_schedules (client_id, frequency, next_run) VALUES (?, 'once', NOW() + INTERVAL '3 minutes') RETURNING next_run");
+        $stmt->execute([$id]);
+        $scheduled_time = $stmt->fetchColumn();
+    }
+    
+    header("Location: client.php?id=$id&scan_scheduled=1&scheduled_time=" . urlencode($scheduled_time));
     exit;
 }
 
@@ -816,12 +846,26 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         <input type="hidden" name="client_id" value="<?=$id?>">
         <button type="submit">Personnaliser le prochain scan</button>
     </form>
-    <form method="post" style="margin-bottom:1em;">
-        <input type="hidden" name="action" value="scan_now">
-        <button type="submit">Lancer un scan maintenant</button>
-    </form>
+    <div style="display:flex;gap:10px;margin-bottom:1em;">
+        <form method="post" style="margin:0;">
+            <input type="hidden" name="action" value="scan_now">
+            <button type="submit">Lancer un scan maintenant</button>
+        </form>
+        <form method="post" style="margin:0;">
+            <input type="hidden" name="action" value="schedule_scan_3min">
+            <button type="submit" style="background:#f39c12;border-color:#e67e22;">Lancer le scan dans 3 minutes</button>
+        </form>
+    </div>
 
     <?php
+    // Message de confirmation pour le scan programmé
+    if (isset($_GET['scan_scheduled']) && $_GET['scan_scheduled'] == '1' && isset($_GET['scheduled_time'])) {
+        $scheduled_time = htmlspecialchars($_GET['scheduled_time']);
+        echo "<div style='color:#27ae60;font-weight:bold;padding:10px;background:#d5f4e6;border:1px solid #27ae60;border-radius:5px;margin-bottom:1em;'>
+                ✓ Scan programmé avec succès pour le $scheduled_time (dans 3 minutes)
+              </div>";
+    }
+    
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
     $day = isset($_GET['day']) ? intval($_GET['day']) : null;
 

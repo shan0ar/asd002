@@ -2,28 +2,56 @@
 require_once __DIR__.'/../includes/db.php';
 $db = getDb();
 
-$now = date('Y-m-d H:i:00'); // arrondi à la minute
-$schedules = $db->query("SELECT * FROM scan_schedules WHERE next_run <= '$now' AND next_run IS NOT NULL")->fetchAll(PDO::FETCH_ASSOC);
+// Use parameterized query to prevent SQL injection
+$stmt = $db->prepare("SELECT * FROM scan_schedules WHERE next_run <= NOW() AND next_run IS NOT NULL");
+$stmt->execute();
+$schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 foreach ($schedules as $sched) {
+    $client_id = $sched['client_id'];
+    
     // Vérifier qu'aucun scan "pending" ou "running" n'est déjà en cours pour ce client à cette date
     $scan = $db->prepare("SELECT * FROM scans WHERE client_id=? AND scan_date = ? AND status != 'done'");
-    $scan->execute([$sched['client_id'], $sched['next_run']]);
+    $scan->execute([$client_id, $sched['next_run']]);
     if ($scan->fetch()) continue; // déjà lancé
     
-    // Créer un scan
+    // Créer un scan avec la même logique que "scan_now"
     $stmt = $db->prepare("INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, ?, true, 'running') RETURNING id");
-    $stmt->execute([$sched['client_id'], $sched['next_run']]);
+    $stmt->execute([$client_id, $sched['next_run']]);
     $scan_id = $stmt->fetchColumn();
 
-    // Récupérer assets
-    $assets = $db->prepare("SELECT asset_value FROM client_assets WHERE client_id=?");
-    $assets->execute([$sched['client_id']]);
-    $assets = $assets->fetchAll(PDO::FETCH_COLUMN);
-    foreach ($assets as $asset) {
-        $cmd = sprintf('bash %s/scan_runner.sh %s %d', __DIR__, escapeshellarg($asset), $scan_id);
-        exec($cmd . ' > /dev/null 2>&1 &');
+    // 1. Liste des assets pour lesquels au moins un outil est coché
+    $assets_stmt = $db->prepare("SELECT DISTINCT asset FROM asset_scan_settings WHERE client_id=? AND enabled=true");
+    $assets_stmt->execute([$client_id]);
+    $assets = $assets_stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    // 2. Liste des outils cochés pour chaque asset
+    $settings_stmt = $db->prepare("SELECT asset, tool FROM asset_scan_settings WHERE client_id=? AND enabled=true");
+    $settings_stmt->execute([$client_id]);
+    $enabled_tools = [];
+    foreach ($settings_stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $enabled_tools[$row['asset']][] = $row['tool'];
     }
+
+    // 3. Exécuter les scans pour chaque asset et outil activé
+    foreach ($assets as $asset) {
+        $asset_tools = $enabled_tools[$asset] ?? [];
+        foreach ($asset_tools as $tool) {
+            // Whitelist validation to prevent command injection
+            $allowed_tools = ['whois', 'amass', 'dig_bruteforce', 'dig_mx', 'dig_txt', 'dig_a', 'whatweb', 'nmap', 'dork'];
+            if (!in_array($tool, $allowed_tools)) {
+                file_put_contents('/opt/asd002-logs/cron_scanner.log', date('c')." SECURITY: Invalid tool '$tool' rejected\n", FILE_APPEND);
+                continue;
+            }
+            
+            $cmd = sprintf('bash /var/www/html/asd002/scripts/scan_%s.sh %s %d', $tool, escapeshellarg($asset), $scan_id);
+            file_put_contents('/opt/asd002-logs/cron_scanner.log', date('c')." CMD: $cmd\n", FILE_APPEND);
+            exec($cmd . ' >> /opt/asd002-logs/cron_scanner.log 2>&1 &');
+        }
+    }
+
+    // Marquer le scan comme terminé
+    $db->prepare("UPDATE scans SET status='done' WHERE id=?")->execute([$scan_id]);
 
     // Marquer la prochaine next_run
     // (à adapter selon la périodicité réelle, ici on remet le champ à NULL pour une planif unique)
