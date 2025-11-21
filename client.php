@@ -821,6 +821,70 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         <button type="submit">Lancer un scan maintenant</button>
     </form>
 
+    <!-- Formulaire caché pour scan différé -->
+    <form method="post" id="form-scan-in-3min" style="display:none;">
+        <input type="hidden" name="action" value="scan_now">
+        <input type="hidden" name="client_id" value="<?=$id?>">
+    </form>
+
+    <!-- Bouton pour lancer un scan dans 3 minutes -->
+    <button type="button" id="btn-scan-in-3min" style="margin-bottom:1em;">Lancer le scan dans 3 minutes</button>
+
+    <script>
+    (function() {
+        var btn = document.getElementById('btn-scan-in-3min');
+        var form = document.getElementById('form-scan-in-3min');
+        var timerId = null;
+        var remainingSeconds = 0;
+        var originalText = 'Lancer le scan dans 3 minutes';
+
+        function formatTime(seconds) {
+            var mins = Math.floor(seconds / 60);
+            var secs = seconds % 60;
+            return 'Scan dans ' + 
+                   String(mins).padStart(2, '0') + ':' + 
+                   String(secs).padStart(2, '0');
+        }
+
+        function updateButton() {
+            if (remainingSeconds > 0) {
+                btn.textContent = formatTime(remainingSeconds);
+                remainingSeconds--;
+            } else {
+                // Temps écoulé, soumettre le formulaire
+                stopTimer();
+                form.submit();
+            }
+        }
+
+        function startTimer() {
+            remainingSeconds = 180; // 3 minutes = 180 secondes
+            btn.textContent = formatTime(remainingSeconds);
+            remainingSeconds--;
+            timerId = setInterval(updateButton, 1000);
+        }
+
+        function stopTimer() {
+            if (timerId) {
+                clearInterval(timerId);
+                timerId = null;
+            }
+            remainingSeconds = 0;
+            btn.textContent = originalText;
+        }
+
+        btn.addEventListener('click', function() {
+            if (timerId) {
+                // Le timer est actif, annuler
+                stopTimer();
+            } else {
+                // Démarrer le timer
+                startTimer();
+            }
+        });
+    })();
+    </script>
+
     <?php
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
     $day = isset($_GET['day']) ? intval($_GET['day']) : null;
