@@ -160,6 +160,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     foreach ($assets as $asset) {
         $asset_tools = $enabled_tools[$asset] ?? [];
         foreach ($asset_tools as $tool) {
+            // Whitelist validation to prevent command injection
+            $allowed_tools = ['whois', 'amass', 'dig_bruteforce', 'dig_mx', 'dig_txt', 'dig_a', 'whatweb', 'nmap', 'dork'];
+            if (!in_array($tool, $allowed_tools)) {
+                file_put_contents('/opt/asd002-logs/php_exec.log', date('c')." SECURITY: Invalid tool '$tool' rejected\n", FILE_APPEND);
+                continue;
+            }
+            
             $cmd = sprintf('bash /var/www/html/asd002/scripts/scan_%s.sh %s %d', $tool, escapeshellarg($asset), $scan_id);
             file_put_contents('/opt/asd002-logs/php_exec.log', date('c')." CMD: $cmd\n", FILE_APPEND);
             exec($cmd . ' >> /opt/asd002-logs/php_exec.log 2>&1');
@@ -172,22 +179,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
 // Programmer un scan dans 3 minutes
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'schedule_scan_3min') {
-    // Calculer l'heure d'exécution (maintenant + 3 minutes)
-    $scheduled_time = date('Y-m-d H:i:s', strtotime('+3 minutes'));
-    
     // Vérifier s'il existe déjà un enregistrement dans scan_schedules pour ce client
     $existing = $db->prepare("SELECT id FROM scan_schedules WHERE client_id=?");
     $existing->execute([$id]);
     $schedule_record = $existing->fetch(PDO::FETCH_ASSOC);
     
     if ($schedule_record) {
-        // Mettre à jour l'enregistrement existant avec la nouvelle next_run
-        $stmt = $db->prepare("UPDATE scan_schedules SET next_run=? WHERE client_id=?");
-        $stmt->execute([$scheduled_time, $id]);
+        // Mettre à jour l'enregistrement existant avec la nouvelle next_run (calculé par la DB)
+        $stmt = $db->prepare("UPDATE scan_schedules SET next_run=NOW() + INTERVAL '3 minutes' WHERE client_id=? RETURNING next_run");
+        $stmt->execute([$id]);
+        $scheduled_time = $stmt->fetchColumn();
     } else {
-        // Créer un nouvel enregistrement
-        $stmt = $db->prepare("INSERT INTO scan_schedules (client_id, frequency, next_run) VALUES (?, 'once', ?)");
-        $stmt->execute([$id, $scheduled_time]);
+        // Créer un nouvel enregistrement (calculé par la DB)
+        $stmt = $db->prepare("INSERT INTO scan_schedules (client_id, frequency, next_run) VALUES (?, 'once', NOW() + INTERVAL '3 minutes') RETURNING next_run");
+        $stmt->execute([$id]);
+        $scheduled_time = $stmt->fetchColumn();
     }
     
     header("Location: client.php?id=$id&scan_scheduled=1&scheduled_time=" . urlencode($scheduled_time));

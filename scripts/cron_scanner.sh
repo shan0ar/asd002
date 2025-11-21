@@ -2,8 +2,10 @@
 require_once __DIR__.'/../includes/db.php';
 $db = getDb();
 
-$now = date('Y-m-d H:i:00'); // arrondi à la minute
-$schedules = $db->query("SELECT * FROM scan_schedules WHERE next_run <= '$now' AND next_run IS NOT NULL")->fetchAll(PDO::FETCH_ASSOC);
+// Use parameterized query to prevent SQL injection
+$stmt = $db->prepare("SELECT * FROM scan_schedules WHERE next_run <= NOW() AND next_run IS NOT NULL");
+$stmt->execute();
+$schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 foreach ($schedules as $sched) {
     $client_id = $sched['client_id'];
@@ -35,6 +37,13 @@ foreach ($schedules as $sched) {
     foreach ($assets as $asset) {
         $asset_tools = $enabled_tools[$asset] ?? [];
         foreach ($asset_tools as $tool) {
+            // Whitelist validation to prevent command injection
+            $allowed_tools = ['whois', 'amass', 'dig_bruteforce', 'dig_mx', 'dig_txt', 'dig_a', 'whatweb', 'nmap', 'dork'];
+            if (!in_array($tool, $allowed_tools)) {
+                file_put_contents('/opt/asd002-logs/cron_scanner.log', date('c')." SECURITY: Invalid tool '$tool' rejected\n", FILE_APPEND);
+                continue;
+            }
+            
             $cmd = sprintf('bash /var/www/html/asd002/scripts/scan_%s.sh %s %d', $tool, escapeshellarg($asset), $scan_id);
             file_put_contents('/opt/asd002-logs/cron_scanner.log', date('c')." CMD: $cmd\n", FILE_APPEND);
             exec($cmd . ' >> /opt/asd002-logs/cron_scanner.log 2>&1 &');
