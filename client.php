@@ -839,51 +839,31 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         var originalText = 'Lancer le scan dans 3 minutes';
         var DELAY_SECONDS = 180; // 3 minutes
 
-        // Fonction utilitaire pour padStart (compatibilité IE)
-        function padStart(str, targetLength, padString) {
-            str = String(str);
-            targetLength = targetLength >> 0;
-            padString = String(typeof padString !== 'undefined' ? padString : ' ');
-            if (str.length >= targetLength) {
-                return str;
-            } else {
-                targetLength = targetLength - str.length;
-                if (targetLength > padString.length) {
-                    // Répéter padString sans utiliser repeat() (compatibilité IE)
-                    var repeatedPad = '';
-                    while (repeatedPad.length < targetLength) {
-                        repeatedPad += padString;
-                    }
-                    padString = repeatedPad;
-                }
-                return padString.slice(0, targetLength) + str;
-            }
+        // Fonction utilitaire pour formater les nombres avec padding (compatibilité IE)
+        function pad2(num) {
+            return ('0' + num).slice(-2);
         }
 
         function formatTime(seconds) {
             var mins = Math.floor(seconds / 60);
             var secs = seconds % 60;
-            return 'Scan dans ' + 
-                   padStart(mins, 2, '0') + ':' + 
-                   padStart(secs, 2, '0');
+            return 'Scan dans ' + pad2(mins) + ':' + pad2(secs);
         }
 
         function updateButton() {
+            remainingSeconds--;
             btn.textContent = formatTime(remainingSeconds);
             if (remainingSeconds <= 0) {
                 // Temps écoulé, soumettre le formulaire
                 stopTimer();
                 form.submit();
-            } else {
-                remainingSeconds--;
             }
         }
 
         function startTimer() {
             remainingSeconds = DELAY_SECONDS;
             btn.textContent = formatTime(remainingSeconds); // Afficher immédiatement 03:00
-            remainingSeconds--;
-            timerId = setInterval(updateButton, 1000);
+            timerId = setInterval(updateButton, 1000); // Première mise à jour après 1 seconde
         }
 
         function stopTimer() {
