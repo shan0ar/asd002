@@ -170,6 +170,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit;
 }
 
+// Programmer un scan dans 3 minutes
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'schedule_scan_3min') {
+    // Calculer l'heure d'exécution (maintenant + 3 minutes)
+    $scheduled_time = date('Y-m-d H:i:s', strtotime('+3 minutes'));
+    
+    // Vérifier s'il existe déjà un enregistrement dans scan_schedules pour ce client
+    $existing = $db->prepare("SELECT id FROM scan_schedules WHERE client_id=?");
+    $existing->execute([$id]);
+    $schedule_record = $existing->fetch(PDO::FETCH_ASSOC);
+    
+    if ($schedule_record) {
+        // Mettre à jour l'enregistrement existant avec la nouvelle next_run
+        $stmt = $db->prepare("UPDATE scan_schedules SET next_run=? WHERE client_id=?");
+        $stmt->execute([$scheduled_time, $id]);
+    } else {
+        // Créer un nouvel enregistrement
+        $stmt = $db->prepare("INSERT INTO scan_schedules (client_id, frequency, next_run) VALUES (?, 'once', ?)");
+        $stmt->execute([$id, $scheduled_time]);
+    }
+    
+    header("Location: client.php?id=$id&scan_scheduled=1&scheduled_time=" . urlencode($scheduled_time));
+    exit;
+}
+
 
 
 // Liste des scans pour calendrier
@@ -816,12 +840,26 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         <input type="hidden" name="client_id" value="<?=$id?>">
         <button type="submit">Personnaliser le prochain scan</button>
     </form>
-    <form method="post" style="margin-bottom:1em;">
-        <input type="hidden" name="action" value="scan_now">
-        <button type="submit">Lancer un scan maintenant</button>
-    </form>
+    <div style="display:flex;gap:10px;margin-bottom:1em;">
+        <form method="post" style="margin:0;">
+            <input type="hidden" name="action" value="scan_now">
+            <button type="submit">Lancer un scan maintenant</button>
+        </form>
+        <form method="post" style="margin:0;">
+            <input type="hidden" name="action" value="schedule_scan_3min">
+            <button type="submit" style="background:#f39c12;border-color:#e67e22;">Lancer le scan dans 3 minutes</button>
+        </form>
+    </div>
 
     <?php
+    // Message de confirmation pour le scan programmé
+    if (isset($_GET['scan_scheduled']) && $_GET['scan_scheduled'] == '1' && isset($_GET['scheduled_time'])) {
+        $scheduled_time = htmlspecialchars($_GET['scheduled_time']);
+        echo "<div style='color:#27ae60;font-weight:bold;padding:10px;background:#d5f4e6;border:1px solid #27ae60;border-radius:5px;margin-bottom:1em;'>
+                ✓ Scan programmé avec succès pour le $scheduled_time (dans 3 minutes)
+              </div>";
+    }
+    
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
     $day = isset($_GET['day']) ? intval($_GET['day']) : null;
 
