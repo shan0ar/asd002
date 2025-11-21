@@ -849,7 +849,12 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
             } else {
                 targetLength = targetLength - str.length;
                 if (targetLength > padString.length) {
-                    padString += padString.repeat(targetLength / padString.length);
+                    // Répéter padString sans utiliser repeat() (compatibilité IE)
+                    var repeatedPad = '';
+                    while (repeatedPad.length < targetLength) {
+                        repeatedPad += padString;
+                    }
+                    padString = repeatedPad;
                 }
                 return padString.slice(0, targetLength) + str;
             }
