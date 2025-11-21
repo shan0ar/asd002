@@ -838,6 +838,23 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         var remainingSeconds = 0;
         var originalText = 'Lancer le scan dans 3 minutes';
 
+        // Polyfill pour padStart (compatibilité IE)
+        if (!String.prototype.padStart) {
+            String.prototype.padStart = function(targetLength, padString) {
+                targetLength = targetLength >> 0;
+                padString = String(typeof padString !== 'undefined' ? padString : ' ');
+                if (this.length >= targetLength) {
+                    return String(this);
+                } else {
+                    targetLength = targetLength - this.length;
+                    if (targetLength > padString.length) {
+                        padString += padString.repeat(targetLength / padString.length);
+                    }
+                    return padString.slice(0, targetLength) + String(this);
+                }
+            };
+        }
+
         function formatTime(seconds) {
             var mins = Math.floor(seconds / 60);
             var secs = seconds % 60;
@@ -847,10 +864,9 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         }
 
         function updateButton() {
-            if (remainingSeconds > 0) {
-                btn.textContent = formatTime(remainingSeconds);
-                remainingSeconds--;
-            } else {
+            btn.textContent = formatTime(remainingSeconds);
+            remainingSeconds--;
+            if (remainingSeconds < 0) {
                 // Temps écoulé, soumettre le formulaire
                 stopTimer();
                 form.submit();
@@ -859,8 +875,7 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
 
         function startTimer() {
             remainingSeconds = 180; // 3 minutes = 180 secondes
-            btn.textContent = formatTime(remainingSeconds);
-            remainingSeconds--;
+            updateButton(); // Afficher immédiatement 03:00
             timerId = setInterval(updateButton, 1000);
         }
 
