@@ -837,30 +837,30 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         var timerId = null;
         var remainingSeconds = 0;
         var originalText = 'Lancer le scan dans 3 minutes';
+        var DELAY_SECONDS = 180; // 3 minutes
 
-        // Polyfill pour padStart (compatibilité IE)
-        if (!String.prototype.padStart) {
-            String.prototype.padStart = function(targetLength, padString) {
-                targetLength = targetLength >> 0;
-                padString = String(typeof padString !== 'undefined' ? padString : ' ');
-                if (this.length >= targetLength) {
-                    return String(this);
-                } else {
-                    targetLength = targetLength - this.length;
-                    if (targetLength > padString.length) {
-                        padString += padString.repeat(targetLength / padString.length);
-                    }
-                    return padString.slice(0, targetLength) + String(this);
+        // Fonction utilitaire pour padStart (compatibilité IE)
+        function padStart(str, targetLength, padString) {
+            str = String(str);
+            targetLength = targetLength >> 0;
+            padString = String(typeof padString !== 'undefined' ? padString : ' ');
+            if (str.length >= targetLength) {
+                return str;
+            } else {
+                targetLength = targetLength - str.length;
+                if (targetLength > padString.length) {
+                    padString += padString.repeat(targetLength / padString.length);
                 }
-            };
+                return padString.slice(0, targetLength) + str;
+            }
         }
 
         function formatTime(seconds) {
             var mins = Math.floor(seconds / 60);
             var secs = seconds % 60;
             return 'Scan dans ' + 
-                   String(mins).padStart(2, '0') + ':' + 
-                   String(secs).padStart(2, '0');
+                   padStart(mins, 2, '0') + ':' + 
+                   padStart(secs, 2, '0');
         }
 
         function updateButton() {
@@ -874,7 +874,7 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         }
 
         function startTimer() {
-            remainingSeconds = 180; // 3 minutes = 180 secondes
+            remainingSeconds = DELAY_SECONDS;
             updateButton(); // Afficher immédiatement 03:00
             timerId = setInterval(updateButton, 1000);
         }
