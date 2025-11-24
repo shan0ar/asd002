@@ -820,6 +820,103 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         <input type="hidden" name="action" value="scan_now">
         <button type="submit">Lancer un scan maintenant</button>
     </form>
+    <!-- === Inserer ici: bouton "Lancer le scan dans 3 minutes" === -->
+    <div id="scan-in-3min-container" style="display:inline-block; margin-left:8px;">
+      <button id="btn-scan-in-3min" class="asset-add-box" type="button"
+              style="display:inline-block; padding:8px 12px; font-size:0.95em;">
+        Lancer le scan dans 3 minutes
+      </button>
+
+      <form id="form-scan-in-3min" method="POST" style="display:none;">
+        <input type="hidden" name="action" value="scan_now">
+        <input type="hidden" name="client_id" id="form-scan-client-id" value="<?php echo isset($id)?htmlspecialchars($id,ENT_QUOTES):''; ?>">
+      </form>
+    </div>
+
+    <script>
+    (function () {
+      const BUTTON_ID = 'btn-scan-in-3min';
+      const FORM_ID = 'form-scan-in-3min';
+      const HIDDEN_CLIENT_ID = 'form-scan-client-id';
+      const DELAY_MS = 180000; // 3 minutes
+
+      const button = document.getElementById(BUTTON_ID);
+      const form = document.getElementById(FORM_ID);
+      const hiddenClient = document.getElementById(HIDDEN_CLIENT_ID);
+      if (!button || !form || !hiddenClient) return;
+
+      const existingClientInput = document.querySelector('input[name="id"]');
+      if (existingClientInput && existingClientInput.value) {
+        hiddenClient.value = existingClientInput.value;
+      }
+
+      let timer = null;
+      let remainingMs = DELAY_MS;
+      const originalText = button.textContent.trim();
+
+      function formatMs(ms) {
+        const totalSec = Math.max(0, Math.ceil(ms / 1000));
+        const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+        const s = String(totalSec % 60).padStart(2, '0');
+        return `${m}:${s}`;
+      }
+
+      function tick() {
+        remainingMs -= 1000;
+        if (remainingMs <= 0) {
+          clearInterval(timer);
+          timer = null;
+          button.textContent = 'Envoi…';
+          form.submit();
+          button.textContent = originalText;
+          button.classList.remove('running');
+        } else {
+          button.textContent = 'Scan dans ' + formatMs(remainingMs);
+        }
+      }
+
+      function startCountdown() {
+        if (timer) return;
+        remainingMs = DELAY_MS;
+        button.textContent = 'Scan dans ' + formatMs(remainingMs);
+        button.classList.add('running');
+        timer = setInterval(tick, 1000);
+      }
+
+      function cancelCountdown() {
+        if (!timer) return;
+        clearInterval(timer);
+        timer = null;
+        button.textContent = originalText;
+        button.classList.remove('running');
+      }
+
+      button.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (!hiddenClient.value) {
+          const existing = document.querySelector('input[name="id"]');
+          if (existing && existing.value) hiddenClient.value = existing.value;
+        }
+        if (!hiddenClient.value) {
+          alert('Impossible de lancer le scan : client_id manquant.');
+          return;
+        }
+
+        if (timer) {
+          cancelCountdown();
+        } else {
+          startCountdown();
+        }
+      });
+
+      window.addEventListener('beforeunload', function () {
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      });
+    })();
+    </script>
 
     <?php
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
