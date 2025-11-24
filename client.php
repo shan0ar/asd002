@@ -922,131 +922,155 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
     </div>
 
     <script>
-    (function () {
-      const BUTTON_ID = 'btn-scan-in-3min';
-      const FORM_ID = 'form-scan-in-3min';
-      const HIDDEN_CLIENT_ID = 'form-scan-client-id';
-      const DELAY_MS = 180000; // 3 minutes
+// --- Remplacer le bloc JS du bouton 'btn-scan-in-3min' par ceci ---
+(function () {
+  const BUTTON_ID = 'btn-scan-in-3min';
+  const FORM_ID = 'form-scan-in-3min';
+  const HIDDEN_CLIENT_ID = 'form-scan-client-id';
+  const DELAY_MS = 180000; // 3 minutes
 
-      const button = document.getElementById(BUTTON_ID);
-      const form = document.getElementById(FORM_ID);
-      const hiddenClient = document.getElementById(HIDDEN_CLIENT_ID);
-      if (!button || !form || !hiddenClient) return;
+  const button = document.getElementById(BUTTON_ID);
+  const form = document.getElementById(FORM_ID); // on garde le form caché au cas où
+  const hiddenClient = document.getElementById(HIDDEN_CLIENT_ID);
+  if (!button || !form || !hiddenClient) return;
 
-      const existingClientInput = document.querySelector('input[name="id"]');
-      if (existingClientInput && existingClientInput.value) {
-        hiddenClient.value = existingClientInput.value;
-      }
+  // Element pour afficher un message
+  let msgEl = document.getElementById('scan-in-3min-msg');
+  if (!msgEl) {
+    msgEl = document.createElement('span');
+    msgEl.id = 'scan-in-3min-msg';
+    msgEl.style.marginLeft = '10px';
+    msgEl.style.fontWeight = '600';
+    form.parentNode.insertBefore(msgEl, form.nextSibling);
+  }
 
-      let timer = null;
-      let remainingMs = DELAY_MS;
-      const originalText = button.textContent.trim();
-
-      function formatMs(ms) {
-        const totalSec = Math.max(0, Math.ceil(ms / 1000));
-        const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
-        const s = String(totalSec % 60).padStart(2, '0');
-        return `${m}:${s}`;
-      }
-
-      function tick() {
-        remainingMs -= 1000;
-        if (remainingMs <= 0) {
-          clearInterval(timer);
-          timer = null;
-          button.textContent = 'Envoi…';
-          form.submit();
-          button.textContent = originalText;
-          button.classList.remove('running');
-        } else {
-          button.textContent = 'Scan dans ' + formatMs(remainingMs);
-        }
-      }
-
-      function startCountdown() {
-        if (timer) return;
-        remainingMs = DELAY_MS;
-        button.textContent = 'Scan dans ' + formatMs(remainingMs);
-        button.classList.add('running');
-        timer = setInterval(tick, 1000);
-      }
-
-      function cancelCountdown() {
-        if (!timer) return;
-        clearInterval(timer);
-        timer = null;
-        button.textContent = originalText;
-        button.classList.remove('running');
-      }
-// === Remplacer le listener existant par ceci (bloc JS) ===
-button.addEventListener('click', function (e) {
-  e.preventDefault();
+  // Assure que client_id est renseigné (valeur déjà injectée en HTML)
   if (!hiddenClient.value) {
-    const existing = document.querySelector('input[name="id"]');
-    if (existing && existing.value) hiddenClient.value = existing.value;
+    // fallback : essaie d'extraire depuis l'URL
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('id')) hiddenClient.value = params.get('id');
   }
   if (!hiddenClient.value) {
-    alert('Impossible de lancer le scan : client_id manquant.');
+    button.disabled = true;
+    msgEl.style.color = 'red';
+    msgEl.textContent = 'client_id manquant';
     return;
   }
 
-  // Si on a déjà un timer -> cancel (UX)
-  if (timer) {
-    cancelCountdown();
-    return;
+  let timer = null;
+  let remainingMs = DELAY_MS;
+  const originalText = button.textContent.trim();
+
+  function formatMs(ms) {
+    const totalSec = Math.max(0, Math.ceil(ms / 1000));
+    const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+    const s = String(totalSec % 60).padStart(2, '0');
+    return `${m}:${s}`;
   }
 
-  // Envoi immédiat au serveur pour créer l'ordre en base
-  const fd = new FormData();
-  fd.append('action', 'schedule_scan');
-  fd.append('client_id', hiddenClient.value);
-  fd.append('delay_seconds', String(DELAY_MS / 1000));
-
-  // Optionnel : inclure token CSRF si tu en as un (ex: input hidden sur la page)
-  const csrfInput = document.querySelector('input[name="csrf_token"]');
-  if (csrfInput) fd.append('csrf_token', csrfInput.value);
-
-  button.disabled = true;
-  button.textContent = 'Programmation…';
-
-  fetch(window.location.pathname, {
-    method: 'POST',
-    body: fd,
-    credentials: 'same-origin',
-    headers: {
-      // on n'impose pas Content-Type ; fetch gère FormData
-      'X-Requested-With': 'XMLHttpRequest'
+  function tick() {
+    remainingMs -= 1000;
+    if (remainingMs <= 0) {
+      clearInterval(timer);
+      timer = null;
+      button.classList.remove('running');
+      button.textContent = originalText;
+      msgEl.style.color = 'green';
+      msgEl.textContent = 'Le scan est planifié en base — le worker s’en chargera.';
+      // ne PAS soumettre le formulaire ici : le job est déjà en base, le worker l'exécutera
+    } else {
+      button.textContent = 'Scan dans ' + formatMs(remainingMs);
     }
-  })
-  .then(r => r.json())
-  .then(json => {
-    if (json && json.success) {
-      // confirmation visuelle
-      const msgEl = document.getElementById('scan-in-3min-msg');
-      if (msgEl) {
+  }
+
+  function startCountdown() {
+    if (timer) return;
+    remainingMs = DELAY_MS;
+    button.textContent = 'Scan dans ' + formatMs(remainingMs);
+    button.classList.add('running');
+    timer = setInterval(tick, 1000);
+  }
+
+  function cancelCountdown() {
+    if (!timer) return;
+    clearInterval(timer);
+    timer = null;
+    button.textContent = originalText;
+    button.classList.remove('running');
+    msgEl.textContent = '';
+  }
+
+  button.addEventListener('click', function (e) {
+    e.preventDefault();
+
+    // Si countdown déjà en cours, on l'annule (UX)
+    if (timer) {
+      cancelCountdown();
+      return;
+    }
+
+    // On envoie immédiatement la requête au serveur pour créer le job (persistant)
+    const fd = new FormData();
+    fd.append('action', 'schedule_scan');
+    fd.append('client_id', hiddenClient.value);
+    fd.append('delay_seconds', String(DELAY_MS / 1000));
+
+    // si tu utilises un token CSRF, ajoute-le ici :
+    const csrfInput = document.querySelector('input[name="csrf_token"]');
+    if (csrfInput && csrfInput.value) fd.append('csrf_token', csrfInput.value);
+
+    button.disabled = true;
+    button.textContent = 'Programmation…';
+    msgEl.style.color = '#333';
+    msgEl.textContent = 'Programmation en cours…';
+
+    // POST vers la même page (client.php) — le server renvoie JSON { success: true, job_id: ... }
+    fetch('client.php', {
+      method: 'POST',
+      body: fd,
+      credentials: 'same-origin',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(resp => {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    })
+    .then(json => {
+      console.log('schedule_scan response:', json);
+      if (json && json.success) {
+        // starter le countdown pour l'UX
         msgEl.style.color = 'green';
         msgEl.textContent = 'Scan programmé (job #' + (json.job_id || '?') + ') — lancement dans 3 min.';
+        startCountdown();
       } else {
-        alert('Scan programmé — lancement dans 3 minutes.');
+        const err = (json && json.error) ? json.error : 'Erreur lors de la programmation';
+        msgEl.style.color = 'red';
+        msgEl.textContent = err;
+        console.error('schedule_scan error:', json);
       }
-      // démarrer le countdown local (pour UX) — même si l'utilisateur part, le job est en base
-      startCountdown();
-    } else {
-      const err = (json && json.error) ? json.error : 'Erreur lors de la programmation';
-      alert(err);
-    }
-  })
-  .catch(err => {
-    console.error(err);
-    alert('Erreur réseau lors de la programmation.');
-  })
-  .finally(() => {
-    button.disabled = false;
-    // restore text si countdown non démarré ; sinon startCountdown a changé le texte
-    if (!timer) button.textContent = originalText;
+    })
+    .catch(err => {
+      console.error(err);
+      msgEl.style.color = 'red';
+      msgEl.textContent = 'Erreur réseau / serveur.';
+    })
+    .finally(() => {
+      button.disabled = false;
+      // si le countdown a démarré, startCountdown a déjà mis le texte,
+      // sinon on remet le texte d'origine
+      if (!timer) button.textContent = originalText;
+    });
   });
-});
-</script>
+
+  // cleanup si l'utilisateur ferme la page : on ne tente rien, le job est en base
+  window.addEventListener('beforeunload', function () {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  });
+})();
+    </script>
 
     <?php
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
