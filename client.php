@@ -137,7 +137,93 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['frequency'])) {
     header("Location: client.php?id=$id");
     exit;
 }
+// ----------------------
+// Handler pour planifier un scan (création persistante d'un job dans scan_jobs)
+// Insert BEFORE the existing "scan_now" handler (avant la ligne qui commence par "if (... 'scan_now')")
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'schedule_scan') {
+    // protéger / valider
+    $client_to_schedule = isset($_POST['client_id']) ? intval($_POST['client_id']) : intval($id);
+    $delay_seconds = isset($_POST['delay_seconds']) ? intval($_POST['delay_seconds']) : 180;
+    if ($client_to_schedule <= 0) {
+        // Si la requête est AJAX, renvoyer JSON, sinon afficher message
+        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false || isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['success'=>false, 'error'=>'client_id invalide']);
+            exit;
+        } else {
+            echo "<div style='color:red;font-weight:bold'>Client invalide pour planification du scan.</div>";
+            exit;
+        }
+    }
 
+    try {
+        // On insère dans scan_jobs la commande planifiée
+        // scheduled_at = now() + delay_seconds
+        // Utilise timestamptz pour timezone-aware (Postgres)
+        $insert_sql = "INSERT INTO scan_jobs (client_id, params, status, scheduled_at, created_at)
+                       VALUES (:client_id, :params, 'pending', now() + (:delay || ' seconds')::interval, now())
+                       RETURNING id";
+        $params = json_encode(['requested_by' => $_SESSION['user_id'] ?? null], JSON_UNESCAPED_UNICODE);
+        $stmt = $db->prepare($insert_sql);
+        $stmt->execute([':client_id' => $client_to_schedule, ':params' => $params, ':delay' => $delay_seconds]);
+        $job_id = $stmt->fetchColumn();
+
+        // Si AJAX -> JSON ; sinon redirection vers client avec param pour afficher message
+        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false || isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['success' => true, 'job_id' => $job_id, 'message' => 'Scan programmé en base']);
+            exit;
+        } else {
+            header("Location: client.php?id={$id}&scheduled={$job_id}");
+            exit;
+        }
+    } catch (Exception $e) {
+        error_log("Erreur planification scan: " . $e->getMessage());
+        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false || isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+            exit;
+        } else {
+            echo "<div style='color:red;font-weight:bold'>Erreur lors de la programmation du scan: " . htmlspecialchars($e->getMessage()) . "</div>";
+            exit;
+        }
+    }
+}
+// ----------------------
+// Planifier un scan (dans X secondes)
+// Insert BEFORE the existing "scan_now" handler (before line ~141)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'schedule_scan') {
+    // Récupération client_id (POST ou fallback $id)
+    $client_to_schedule = isset($_POST['client_id']) ? intval($_POST['client_id']) : intval($id);
+    $delay_seconds = isset($_POST['delay_seconds']) ? intval($_POST['delay_seconds']) : 180;
+    if ($client_to_schedule <= 0) {
+        // erreur utilisateur / redirection légère
+        echo "<div style='color:red;font-weight:bold'>Client invalide pour planification du scan.</div>";
+        exit;
+    }
+
+    try {
+        // Utilisation de la table scans existante : on crée une ligne avec scan_date = now() + interval 'X seconds'
+        // scheduled = true, status = 'pending'
+        // Postgres syntax is used (le projet utilise RETURNING id)
+        $sql = "INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, now() + make_interval(secs => ?), true, 'pending') RETURNING id";
+        // Si make_interval() n'est pas disponible sur ta PG version, utilise: now() + (? || ' seconds')::interval
+        // Exemple alternatif : "INSERT ... VALUES (?, now() + (? || ' seconds')::interval, true, 'pending') RETURNING id"
+        $stmt = $db->prepare($sql);
+        $stmt->execute([$client_to_schedule, $delay_seconds]);
+        $scheduled_scan_id = $stmt->fetchColumn();
+
+        // redirige / message utilisateur
+        header("Location: client.php?id={$id}&scheduled={$scheduled_scan_id}");
+        exit;
+    } catch (Exception $e) {
+        // fallback : affiche erreur (tu peux logguer)
+        error_log("Erreur planification scan: " . $e->getMessage());
+        echo "<div style='color:red;font-weight:bold'>Erreur lors de la programmation du scan: " . htmlspecialchars($e->getMessage()) . "</div>";
+        exit;
+    }
+}
+// ----------------------
 // Lancer un scan immédiat (corrigé pour prendre en compte les outils cochés)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'scan_now') {
     $stmt = $db->prepare("INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, now(), false, 'running') RETURNING id");
@@ -827,10 +913,12 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         Lancer le scan dans 3 minutes
       </button>
 
-      <form id="form-scan-in-3min" method="POST" style="display:none;">
-        <input type="hidden" name="action" value="scan_now">
-        <input type="hidden" name="client_id" id="form-scan-client-id" value="<?php echo isset($id)?htmlspecialchars($id,ENT_QUOTES):''; ?>">
-      </form>
+<!-- remplace ceci autour de la ligne ~830 -->
+<form id="form-scan-in-3min" method="POST" style="display:none;">
+  <input type="hidden" name="action" value="schedule_scan">
+  <input type="hidden" name="client_id" id="form-scan-client-id" value="<?php echo isset($id)?htmlspecialchars($id,ENT_QUOTES):''; ?>">
+  <input type="hidden" name="delay_seconds" value="180"> <!-- 180 = 3 minutes -->
+</form>
     </div>
 
     <script>
@@ -890,33 +978,75 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
         button.textContent = originalText;
         button.classList.remove('running');
       }
+// === Remplacer le listener existant par ceci (bloc JS) ===
+button.addEventListener('click', function (e) {
+  e.preventDefault();
+  if (!hiddenClient.value) {
+    const existing = document.querySelector('input[name="id"]');
+    if (existing && existing.value) hiddenClient.value = existing.value;
+  }
+  if (!hiddenClient.value) {
+    alert('Impossible de lancer le scan : client_id manquant.');
+    return;
+  }
 
-      button.addEventListener('click', function (e) {
-        e.preventDefault();
-        if (!hiddenClient.value) {
-          const existing = document.querySelector('input[name="id"]');
-          if (existing && existing.value) hiddenClient.value = existing.value;
-        }
-        if (!hiddenClient.value) {
-          alert('Impossible de lancer le scan : client_id manquant.');
-          return;
-        }
+  // Si on a déjà un timer -> cancel (UX)
+  if (timer) {
+    cancelCountdown();
+    return;
+  }
 
-        if (timer) {
-          cancelCountdown();
-        } else {
-          startCountdown();
-        }
-      });
+  // Envoi immédiat au serveur pour créer l'ordre en base
+  const fd = new FormData();
+  fd.append('action', 'schedule_scan');
+  fd.append('client_id', hiddenClient.value);
+  fd.append('delay_seconds', String(DELAY_MS / 1000));
 
-      window.addEventListener('beforeunload', function () {
-        if (timer) {
-          clearInterval(timer);
-          timer = null;
-        }
-      });
-    })();
-    </script>
+  // Optionnel : inclure token CSRF si tu en as un (ex: input hidden sur la page)
+  const csrfInput = document.querySelector('input[name="csrf_token"]');
+  if (csrfInput) fd.append('csrf_token', csrfInput.value);
+
+  button.disabled = true;
+  button.textContent = 'Programmation…';
+
+  fetch(window.location.pathname, {
+    method: 'POST',
+    body: fd,
+    credentials: 'same-origin',
+    headers: {
+      // on n'impose pas Content-Type ; fetch gère FormData
+      'X-Requested-With': 'XMLHttpRequest'
+    }
+  })
+  .then(r => r.json())
+  .then(json => {
+    if (json && json.success) {
+      // confirmation visuelle
+      const msgEl = document.getElementById('scan-in-3min-msg');
+      if (msgEl) {
+        msgEl.style.color = 'green';
+        msgEl.textContent = 'Scan programmé (job #' + (json.job_id || '?') + ') — lancement dans 3 min.';
+      } else {
+        alert('Scan programmé — lancement dans 3 minutes.');
+      }
+      // démarrer le countdown local (pour UX) — même si l'utilisateur part, le job est en base
+      startCountdown();
+    } else {
+      const err = (json && json.error) ? json.error : 'Erreur lors de la programmation';
+      alert(err);
+    }
+  })
+  .catch(err => {
+    console.error(err);
+    alert('Erreur réseau lors de la programmation.');
+  })
+  .finally(() => {
+    button.disabled = false;
+    // restore text si countdown non démarré ; sinon startCountdown a changé le texte
+    if (!timer) button.textContent = originalText;
+  });
+});
+</script>
 
     <?php
     $just_launched = isset($_GET['just_launched']) ? intval($_GET['just_launched']) : null;
