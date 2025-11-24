@@ -189,42 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
     }
 }
-// ----------------------
-// Planifier un scan (dans X secondes)
-// Insert BEFORE the existing "scan_now" handler (before line ~141)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'schedule_scan') {
-    // Récupération client_id (POST ou fallback $id)
-    $client_to_schedule = isset($_POST['client_id']) ? intval($_POST['client_id']) : intval($id);
-    $delay_seconds = isset($_POST['delay_seconds']) ? intval($_POST['delay_seconds']) : 180;
-    if ($client_to_schedule <= 0) {
-        // erreur utilisateur / redirection légère
-        echo "<div style='color:red;font-weight:bold'>Client invalide pour planification du scan.</div>";
-        exit;
-    }
-
-    try {
-        // Utilisation de la table scans existante : on crée une ligne avec scan_date = now() + interval 'X seconds'
-        // scheduled = true, status = 'pending'
-        // Postgres syntax is used (le projet utilise RETURNING id)
-        $sql = "INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, now() + make_interval(secs => ?), true, 'pending') RETURNING id";
-        // Si make_interval() n'est pas disponible sur ta PG version, utilise: now() + (? || ' seconds')::interval
-        // Exemple alternatif : "INSERT ... VALUES (?, now() + (? || ' seconds')::interval, true, 'pending') RETURNING id"
-        $stmt = $db->prepare($sql);
-        $stmt->execute([$client_to_schedule, $delay_seconds]);
-        $scheduled_scan_id = $stmt->fetchColumn();
-
-        // redirige / message utilisateur
-        header("Location: client.php?id={$id}&scheduled={$scheduled_scan_id}");
-        exit;
-    } catch (Exception $e) {
-        // fallback : affiche erreur (tu peux logguer)
-        error_log("Erreur planification scan: " . $e->getMessage());
-        echo "<div style='color:red;font-weight:bold'>Erreur lors de la programmation du scan: " . htmlspecialchars($e->getMessage()) . "</div>";
-        exit;
-    }
-}
-// ----------------------
-// Lancer un scan immédiat (corrigé pour prendre en compte les outils cochés)
+//Lancer un scan immédiat (corrigé pour prendre en compte les outils cochés)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'scan_now') {
     $stmt = $db->prepare("INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, now(), false, 'running') RETURNING id");
     $stmt->execute([$id]);
