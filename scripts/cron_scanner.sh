@@ -25,8 +25,13 @@ foreach ($schedules as $sched) {
         exec($cmd . ' > /dev/null 2>&1 &');
     }
 
-    // Marquer la prochaine next_run
-    // (à adapter selon la périodicité réelle, ici on remet le champ à NULL pour une planif unique)
-    $db->prepare("UPDATE scan_schedules SET next_run=NULL WHERE id=?")->execute([$sched['id']]);
+    // Recalculate next_run based on frequency instead of setting to NULL
+    $new_next_run = calculateNextRun(
+        $sched['frequency'],
+        $sched['day_of_week'],
+        $sched['time'],
+        $sched['next_run']  // Calculate from the just-executed run
+    );
+    $db->prepare("UPDATE scan_schedules SET next_run=? WHERE id=?")->execute([$new_next_run, $sched['id']]);
 }
 ?>
