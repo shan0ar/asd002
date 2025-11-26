@@ -5,6 +5,16 @@ error_reporting(E_ALL);
 require_once 'includes/db.php';
 require_once 'includes/session_check.php';
 $db = getDb();
+// === CSRF token génération (ajouter IMMEDIATEMENT après require_once 'includes/session_check.php' et $db = getDb();) ===
+if (session_status() !== PHP_SESSION_ACTIVE) session_start(); // normalement session_check.php le fait, mais on s'assure
+if (empty($_SESSION['csrf_token'])) {
+    try {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    } catch (Exception $e) {
+        // fallback si random_bytes indisponible
+        $_SESSION['csrf_token'] = bin2hex(openssl_random_pseudo_bytes(32));
+    }
+}
 // GESTION AJAX — doit être AVANT tout HTML/ECHO !
 if (isset($_GET['action']) && $_GET['action'] === 'add_asset' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
@@ -119,10 +129,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['brute_count'])) {
     echo "<div style='color:green;font-weight:bold'>Nombre de tentatives bruteforce enregistré : $brute_count</div>";
 }
 
-// ---------- Handler pour sauvegarder la planification et créer un job ----------
+// Handler sauvegarde schedule avancé (ajoute controle fin/occurrences)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_schedule2'])) {
-    // sécurité / auth (réutilise la session existante)
-    // CSRF facultatif : vérifier si tu utilises $_SESSION['csrf_token']
+    // CSRF check (si tu as mis le token)
     if (isset($_POST['csrf_token'])) {
         if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
             echo "<div style='color:red'>Token CSRF invalide.</div>";
@@ -130,76 +139,121 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_schedule2'])) {
         }
     }
 
-    $db = isset($db) ? $db : getDb();
+    $client_id = intval($_POST['client_id'] ?? 0);
+    if ($client_id <= 0) { echo "<div style='color:red'>Client invalide</div>"; exit; }
 
-    $freq = $_POST['frequency'] ?? 'weekly'; // weekly, monthly, quarterly, semiannual, annual
-    $day_of_week = isset($_POST['day_of_week']) ? intval($_POST['day_of_week']) : 1; // 1=Mon..7=Sun
+    $freq = $_POST['frequency'] ?? 'weekly';
+    $day_of_week = intval($_POST['day_of_week'] ?? 1);
     $time = $_POST['time'] ?? '00:00';
-    $custom_date = $_POST['custom_date'] ?? '';
-    $custom_time = $_POST['custom_time'] ?? '';
+    $custom_date = $_POST['custom_date'] ?? null;
+    $custom_time = $_POST['custom_time'] ?? null;
 
-    // Calcul du next_run
-    try {
-        if (!empty($custom_date) && !empty($custom_time)) {
-            // format attendu custom_date=YYYY-MM-DD (input type=date), custom_time=HH:MM
-            $next = new DateTime($custom_date . ' ' . $custom_time);
+    // end options
+    $end_after_years = isset($_POST['end_after_years']) && $_POST['end_after_years'] !== '' ? intval($_POST['end_after_years']) : null;
+    $occurrences = isset($_POST['occurrences']) && $_POST['occurrences'] !== '' ? intval($_POST['occurrences']) : null;
+    $end_date = isset($_POST['end_date']) && $_POST['end_date'] !== '' ? $_POST['end_date'] : null;
+
+    // compute initial next_run
+    if ($custom_date && $custom_time) {
+        $next = new DateTime($custom_date . ' ' . $custom_time);
+    } else {
+        // compute next occurrence of the chosen day/time (same logic as earlier)
+        $now = new DateTime();
+        $parts = explode(':', $time);
+        $hh = intval($parts[0]); $mm = intval($parts[1]);
+        $current_wd = intval($now->format('N'));
+        $diff = ($day_of_week - $current_wd + 7) % 7;
+        $candidate = (clone $now)->setTime($hh, $mm, 0);
+        if ($diff === 0 && $candidate <= $now) $diff = 7;
+        $next = $now->modify("+{$diff} days")->setTime($hh, $mm, 0);
+    }
+
+    // determine occurrences_remaining and end_date to store
+    $occ_rem = null;
+    $end_date_to_store = null;
+    if ($occurrences) {
+        $occ_rem = $occurrences;
+        $occ_total = $occurrences;
+    } elseif ($end_after_years) {
+        // approximate occurrences for weekly frequency only; otherwise leave end_date
+        if ($freq === 'weekly') {
+            $occ_rem = intval($end_after_years * 52);
+            $occ_total = $occ_rem;
         } else {
-            // calculer prochaine occurrence du jour de la semaine à l'heure donnée
-            // mapping day_of_week: 1=Lundi ... 7=Dimanche (HTML select devra utiliser 1..7)
-            $now = new DateTime();
-            // time parts
-            list($hh, $mm) = array_map('intval', explode(':', $time . ':00'));
-            $target = clone $now;
-            $current_wd = intval($now->format('N')); // 1..7
-            $diff = ($day_of_week - $current_wd + 7) % 7;
-            // si même jour et time > now-> garde diff = 0 else si même jour and time <= now -> diff = 7
-            $candidate = (clone $now)->setTime($hh, $mm, 0);
-            if ($diff === 0 && $candidate <= $now) $diff = 7;
-            $target->modify("+{$diff} days");
-            $target->setTime($hh, $mm, 0);
-            $next = $target;
+            // convert years to end_date
+            $ed = new DateTime();
+            $ed->modify('+'.$end_after_years.' years');
+            $end_date_to_store = $ed->format('Y-m-d H:i:s');
+            $occ_total = null;
         }
+    } elseif ($end_date) {
+        // user provided date (YYYY-MM-DD)
+        $ed = new DateTime($end_date . ' 23:59:59');
+        $end_date_to_store = $ed->format('Y-m-d H:i:s');
+        $occ_total = null;
+    }
 
-        // Insérer / mettre à jour la table scan_schedules
-        $client_id = isset($_POST['client_id']) ? intval($_POST['client_id']) : (isset($id) ? intval($id) : 0);
-        if ($client_id <= 0) {
-            echo "<div style='color:red'>Client invalide.</div>";
+    // Upsert into scan_schedules (set next_run to $next)
+    $db = getDb();
+    $stmt = $db->prepare("SELECT id FROM scan_schedules WHERE client_id = ?");
+    $stmt->execute([$client_id]);
+    if ($stmt->fetch()) {
+        $upd = $db->prepare("UPDATE scan_schedules SET frequency=?, day_of_week=?, time=?, next_run=?, active=true, end_date=?, occurrences_remaining=?, occurrences_total=? WHERE client_id=?");
+        $upd->execute([$freq, $day_of_week, $time, $next->format('Y-m-d H:i:s'), $end_date_to_store, $occ_rem, $occ_total ?? null, $client_id]);
+    } else {
+        $ins = $db->prepare("INSERT INTO scan_schedules (client_id, frequency, day_of_week, time, next_run, active, end_date, occurrences_remaining, occurrences_total) VALUES (?, ?, ?, ?, ?, true, ?, ?, ?)");
+        $ins->execute([$client_id, $freq, $day_of_week, $time, $next->format('Y-m-d H:i:s'), $end_date_to_store, $occ_rem, $occ_total ?? null]);
+    }
+
+    // Also optionally create the immediate scan_jobs entry for the next_run (so it exists even if worker misses)
+    $params = json_encode(['via'=>'schedule_ui']);
+    $jobStmt = $db->prepare("INSERT INTO scan_jobs (client_id, params, status, scheduled_at, created_at) VALUES (?, ?, 'pending', ?, now())");
+    $jobStmt->execute([$client_id, $params, $next->format('Y-m-d H:i:s')]);
+
+    $_SESSION['flash_message'] = "Planification enregistrée pour " . $next->format('d/m/Y H:i');
+    header("Location: client.php?id=$client_id");
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_schedule'])) {
+    // start session if needed
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+
+    // CSRF check (si tu utilises un token)
+    if (empty($_POST['csrf_token']) || empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        // réponse JSON si requête AJAX, sinon message utilisateur
+        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false || isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
+            header('Content-Type: application/json; charset=utf-8');
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'Token CSRF invalide']);
+            exit;
+        } else {
+            $_SESSION['flash_message'] = "Token CSRF invalide. Annulation non effectuée.";
+            header("Location: client.php?id=" . intval($_POST['client_id'] ?? 0));
             exit;
         }
+    }
 
-        // upsert scan_schedules (Postgres)
-        $stmt = $db->prepare("SELECT id FROM scan_schedules WHERE client_id = ?");
-        $stmt->execute([$client_id]);
-        if ($stmt->fetch()) {
-            $upd = $db->prepare("UPDATE scan_schedules SET frequency = ?, day_of_week = ?, time = ?, next_run = ? WHERE client_id = ?");
-            $upd->execute([$freq, $day_of_week, $time, $next->format('Y-m-d H:i:s'), $client_id]);
-        } else {
-            $ins = $db->prepare("INSERT INTO scan_schedules (client_id, frequency, day_of_week, time, next_run) VALUES (?, ?, ?, ?, ?)");
-            $ins->execute([$client_id, $freq, $day_of_week, $time, $next->format('Y-m-d H:i:s')]);
-        }
-
-        // Créer un job persisté dans scan_jobs (scheduled_at = next_run)
-        $params = json_encode(['requested_by' => $_SESSION['user_id'] ?? null, 'via' => 'ui_schedule2']);
-        $jobSql = "INSERT INTO scan_jobs (client_id, params, status, scheduled_at, created_at) VALUES (:client_id, :params, 'pending', :scheduled_at, now()) RETURNING id";
-        $jobStmt = $db->prepare($jobSql);
-        $jobStmt->execute([
-            ':client_id' => $client_id,
-            ':params' => $params,
-            ':scheduled_at' => $next->format('Y-m-d H:i:s')
-        ]);
-        $job_id = $jobStmt->fetchColumn();
-
-        // message et redirection pour confirmation
-        $_SESSION['flash_message'] = "Planification enregistrée — job #{$job_id} programmé pour " . $next->format('d/m/Y H:i');
+    $sched_id = intval($_POST['schedule_id'] ?? 0);
+    $client_id = intval($_POST['client_id'] ?? 0);
+    if ($sched_id <= 0) {
+        $_SESSION['flash_message'] = "Planification invalide.";
         header("Location: client.php?id=" . $client_id);
         exit;
-    } catch (Exception $e) {
-        error_log("schedule save error: " . $e->getMessage());
-        echo "<div style='color:red'>Erreur serveur lors de l'enregistrement de la planification.</div>";
-        exit;
     }
-}
 
+    try {
+        $db = isset($db) ? $db : getDb();
+        $stmt = $db->prepare("UPDATE scan_schedules SET active=false WHERE id=?");
+        $stmt->execute([$sched_id]);
+        $_SESSION['flash_message'] = "Planification #{$sched_id} annulée.";
+    } catch (Exception $e) {
+        error_log("Cancel schedule error: " . $e->getMessage());
+        $_SESSION['flash_message'] = "Erreur lors de l'annulation (voir logs).";
+    }
+
+    header("Location: client.php?id=" . $client_id);
+    exit;
+}
 // ----------------------
 // Debug/robust handler pour planifier un scan (remplace temporairement l'ancien handler)
 // PLACE THIS BLOCK BEFORE ANY HTML OUTPUT (i.e. where the previous schedule_scan handler was)
@@ -324,6 +378,31 @@ $daysInMonth = date('t', $firstDay);
 $startDay = date('N', $firstDay);
 
 $date_now = date('Y-m-d H:i:s');
+?>
+<?php
+// Display existing schedules for this client (put somewhere in the page)
+$scheds = $db->prepare("SELECT id, frequency, day_of_week, time, next_run, active, end_date, occurrences_remaining FROM scan_schedules WHERE client_id = ? ORDER BY next_run ASC");
+$scheds->execute([$id]);
+$rows = $scheds->fetchAll(PDO::FETCH_ASSOC);
+if (count($rows)) {
+    echo "<h3>Planifications actives</h3><table class='data'><tr><th>#</th><th>Fréquence</th><th>Jour</th><th>Heure</th><th>Prochain run</th><th>Fin</th><th></th></tr>";
+    foreach ($rows as $r) {
+        $days = ['1'=>'Lun','2'=>'Mar','3'=>'Mer','4'=>'Jeu','5'=>'Ven','6'=>'Sam','7'=>'Dim'];
+        $freq_label = ucfirst($r['frequency']);
+        $day_label = $days[$r['day_of_week']] ?? '-';
+        $end = $r['end_date'] ? $r['end_date'] : ($r['occurrences_remaining'] ? ($r['occurrences_remaining'].' occ.') : '-');
+        $active = $r['active'] ? 'oui' : 'non';
+        echo "<tr><td>".intval($r['id'])."</td><td>".htmlspecialchars($freq_label)."</td><td>{$day_label}</td><td>{$r['time']}</td><td>{$r['next_run']}</td><td>$end</td>";
+        echo "<td><form method='post' style='display:inline;margin:0;'>"
+   . "<input type='hidden' name='cancel_schedule' value='1'>"
+   . "<input type='hidden' name='schedule_id' value='" . intval($r['id']) . "'>"
+   . "<input type='hidden' name='client_id' value='" . intval($id) . "'>"
+   . "<input type='hidden' name='csrf_token' value='" . htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES) . "'>"
+   . "<button type='submit' style='padding:4px 8px;font-size:0.9em;'>Annuler</button>"
+   . "</form></td></tr>";
+    }
+    echo "</table>";
+}
 ?>
 <!DOCTYPE html>
 <html lang="fr">
