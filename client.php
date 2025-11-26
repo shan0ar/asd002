@@ -128,7 +128,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['brute_count'])) {
     $brute_count = $new_brute_count;
     echo "<div style='color:green;font-weight:bold'>Nombre de tentatives bruteforce enregistré : $brute_count</div>";
 }
+// --- Handler robuste pour annuler une planification (remplacer l'ancien handler) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_schedule'])) {
+    // s'assurer session active
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
 
+    // petite fonction utilitaire pour répondre JSON/redirect
+    $isAjax = (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false) || !empty($_SERVER['HTTP_X_REQUESTED_WITH']);
+    $respondJson = function($data, $code = 200) {
+        http_response_code($code);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($data);
+        exit;
+    };
+
+    // CSRF
+    $postedCsrf = $_POST['csrf_token'] ?? '';
+    if (empty($postedCsrf) || empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $postedCsrf)) {
+        if ($isAjax) {
+            $respondJson(['success' => false, 'error' => 'Token CSRF invalide'], 403);
+        } else {
+            $_SESSION['flash_message'] = "Token CSRF invalide. Annulation non effectuée.";
+            header("Location: client.php?id=" . intval($_POST['client_id'] ?? 0));
+            exit;
+        }
+    }
+
+    $sched_id = intval($_POST['schedule_id'] ?? 0);
+    $client_id = intval($_POST['client_id'] ?? 0);
+    if ($sched_id <= 0) {
+        if ($isAjax) $respondJson(['success' => false, 'error' => 'schedule_id invalide'], 400);
+        $_SESSION['flash_message'] = "Planification invalide.";
+        header("Location: client.php?id=" . $client_id);
+        exit;
+    }
+
+    try {
+        $db = isset($db) ? $db : getDb();
+
+        // UPDATE avec RETURNING pour vérifier
+        $stmt = $db->prepare("UPDATE scan_schedules SET active = false, updated_at = now() WHERE id = ? RETURNING id, active");
+        $stmt->execute([$sched_id]);
+        $res = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        // log for debugging
+        $logLine = date('c') . " cancel_schedule: schedule_id={$sched_id} client_id={$client_id} user_id=" . ($_SESSION['user_id'] ?? 'NULL') . " result=" . json_encode($res) . PHP_EOL;
+        @file_put_contents('/var/log/asd002/cancel_schedule.log', $logLine, FILE_APPEND | LOCK_EX);
+
+        if ($res && isset($res['id'])) {
+            // succès
+            if ($isAjax) {
+                $respondJson(['success' => true, 'schedule_id' => intval($res['id'])]);
+            } else {
+                $_SESSION['flash_message'] = "Planification #{$sched_id} annulée.";
+                header("Location: client.php?id=" . $client_id);
+                exit;
+            }
+        } else {
+            // aucune ligne mise à jour (id inexistant)
+            if ($isAjax) {
+                $respondJson(['success' => false, 'error' => 'Planification introuvable'], 404);
+            } else {
+                $_SESSION['flash_message'] = "Planification introuvable.";
+                header("Location: client.php?id=" . $client_id);
+                exit;
+            }
+        }
+    } catch (Exception $e) {
+        // log exception
+        $err = date('c') . " cancel_schedule ERROR: " . $e->getMessage() . " schedule_id={$sched_id}\n";
+        @file_put_contents('/var/log/asd002/cancel_schedule.log', $err, FILE_APPEND | LOCK_EX);
+        if ($isAjax) {
+            $respondJson(['success' => false, 'error' => 'Erreur serveur'], 500);
+        } else {
+            $_SESSION['flash_message'] = "Erreur lors de l'annulation (voir logs).";
+            header("Location: client.php?id=" . $client_id);
+            exit;
+        }
+    }
+}
 // Handler sauvegarde schedule avancé (ajoute controle fin/occurrences)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_schedule2'])) {
     // CSRF check (si tu as mis le token)
@@ -214,18 +292,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_schedule2'])) {
     header("Location: client.php?id=$client_id");
     exit;
 }
+// --- Handler robuste pour annuler une planification (remplacer l'ancien handler) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_schedule'])) {
-    // start session if needed
+    // s'assurer session active
     if (session_status() !== PHP_SESSION_ACTIVE) session_start();
 
-    // CSRF check (si tu utilises un token)
-    if (empty($_POST['csrf_token']) || empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
-        // réponse JSON si requête AJAX, sinon message utilisateur
-        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false || isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
-            header('Content-Type: application/json; charset=utf-8');
-            http_response_code(403);
-            echo json_encode(['success' => false, 'error' => 'Token CSRF invalide']);
-            exit;
+    // petite fonction utilitaire pour répondre JSON/redirect
+    $isAjax = (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false) || !empty($_SERVER['HTTP_X_REQUESTED_WITH']);
+    $respondJson = function($data, $code = 200) {
+        http_response_code($code);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($data);
+        exit;
+    };
+
+    // CSRF
+    $postedCsrf = $_POST['csrf_token'] ?? '';
+    if (empty($postedCsrf) || empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $postedCsrf)) {
+        if ($isAjax) {
+            $respondJson(['success' => false, 'error' => 'Token CSRF invalide'], 403);
         } else {
             $_SESSION['flash_message'] = "Token CSRF invalide. Annulation non effectuée.";
             header("Location: client.php?id=" . intval($_POST['client_id'] ?? 0));
@@ -236,6 +321,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_schedule'])) {
     $sched_id = intval($_POST['schedule_id'] ?? 0);
     $client_id = intval($_POST['client_id'] ?? 0);
     if ($sched_id <= 0) {
+        if ($isAjax) $respondJson(['success' => false, 'error' => 'schedule_id invalide'], 400);
         $_SESSION['flash_message'] = "Planification invalide.";
         header("Location: client.php?id=" . $client_id);
         exit;
@@ -243,16 +329,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_schedule'])) {
 
     try {
         $db = isset($db) ? $db : getDb();
-        $stmt = $db->prepare("UPDATE scan_schedules SET active=false WHERE id=?");
-        $stmt->execute([$sched_id]);
-        $_SESSION['flash_message'] = "Planification #{$sched_id} annulée.";
-    } catch (Exception $e) {
-        error_log("Cancel schedule error: " . $e->getMessage());
-        $_SESSION['flash_message'] = "Erreur lors de l'annulation (voir logs).";
-    }
 
-    header("Location: client.php?id=" . $client_id);
-    exit;
+        // UPDATE sans updated_at (colonne inexistante)
+        $stmt = $db->prepare("UPDATE scan_schedules SET active = false WHERE id = ? RETURNING id, active");
+        $stmt->execute([$sched_id]);
+        $res = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        // log for debugging
+        $logLine = date('c') . " cancel_schedule: schedule_id={$sched_id} client_id={$client_id} user_id=" . ($_SESSION['user_id'] ?? 'NULL') . " result=" . json_encode($res) . PHP_EOL;
+        @file_put_contents('/var/log/asd002/cancel_schedule.log', $logLine, FILE_APPEND | LOCK_EX);
+
+        if ($res && isset($res['id'])) {
+            if ($isAjax) {
+                $respondJson(['success' => true, 'schedule_id' => intval($res['id'])]);
+            } else {
+                $_SESSION['flash_message'] = "Planification #{$sched_id} annulée.";
+                header("Location: client.php?id=" . $client_id);
+                exit;
+            }
+        } else {
+            if ($isAjax) {
+                $respondJson(['success' => false, 'error' => 'Planification introuvable'], 404);
+            } else {
+                $_SESSION['flash_message'] = "Planification introuvable.";
+                header("Location: client.php?id=" . $client_id);
+                exit;
+            }
+        }
+    } catch (Exception $e) {
+        // log exception
+        $err = date('c') . " cancel_schedule ERROR: " . $e->getMessage() . " schedule_id={$sched_id}\n";
+        @file_put_contents('/var/log/asd002/cancel_schedule.log', $err, FILE_APPEND | LOCK_EX);
+        if ($isAjax) {
+            $respondJson(['success' => false, 'error' => 'Erreur serveur'], 500);
+        } else {
+            $_SESSION['flash_message'] = "Erreur lors de l'annulation (voir logs).";
+            header("Location: client.php?id=" . $client_id);
+            exit;
+        }
+    }
 }
 // ----------------------
 // Debug/robust handler pour planifier un scan (remplace temporairement l'ancien handler)
@@ -381,7 +496,7 @@ $date_now = date('Y-m-d H:i:s');
 ?>
 <?php
 // Display existing schedules for this client (put somewhere in the page)
-$scheds = $db->prepare("SELECT id, frequency, day_of_week, time, next_run, active, end_date, occurrences_remaining FROM scan_schedules WHERE client_id = ? ORDER BY next_run ASC");
+$scheds = $db->prepare("SELECT id, frequency, day_of_week, time, next_run, active, end_date, occurrences_remaining FROM scan_schedules WHERE client_id = ? AND active = true ORDER BY next_run ASC");
 $scheds->execute([$id]);
 $rows = $scheds->fetchAll(PDO::FETCH_ASSOC);
 if (count($rows)) {
@@ -393,13 +508,12 @@ if (count($rows)) {
         $end = $r['end_date'] ? $r['end_date'] : ($r['occurrences_remaining'] ? ($r['occurrences_remaining'].' occ.') : '-');
         $active = $r['active'] ? 'oui' : 'non';
         echo "<tr><td>".intval($r['id'])."</td><td>".htmlspecialchars($freq_label)."</td><td>{$day_label}</td><td>{$r['time']}</td><td>{$r['next_run']}</td><td>$end</td>";
-        echo "<td><form method='post' style='display:inline;margin:0;'>"
-   . "<input type='hidden' name='cancel_schedule' value='1'>"
-   . "<input type='hidden' name='schedule_id' value='" . intval($r['id']) . "'>"
-   . "<input type='hidden' name='client_id' value='" . intval($id) . "'>"
-   . "<input type='hidden' name='csrf_token' value='" . htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES) . "'>"
-   . "<button type='submit' style='padding:4px 8px;font-size:0.9em;'>Annuler</button>"
-   . "</form></td></tr>";
+        // Remplacer l'ancien form/echo par un simple bouton (AJAX)
+echo "<td>"
+   . "<button type='button' class='cancel-schedule-btn' "
+   . "data-schedule-id='".intval($r['id'])."' data-client-id='".intval($id)."' "
+   . "style='padding:4px 8px;font-size:0.9em;'>Annuler</button>"
+   . "</td></tr>";
     }
     echo "</table>";
 }
@@ -934,7 +1048,7 @@ function formatDateTime($s) {
                     </tbody>
                 </table>
             </div>
-            <button type="submit">Enregistrer ces paramètres</button>
+            <button type="submit">Enregistrer</button>
         </form>
         <div style="font-size:0.93em;color:#888;margin-top:8px;">Chaque outil sera utilisé ou non pour chaque asset au prochain scan, selon vos choix ici.</div>
     </div>
@@ -1043,7 +1157,7 @@ function formatDateTime($s) {
       <td></td>
       <td>
         <button type="submit" title="Enregistrer la planification" style="font-size:0.95em;padding:6px 10px;">
-          💾 Enregistrer
+          Enregistrer
         </button>
       </td>
     </tr>
@@ -1743,6 +1857,73 @@ function startSchedule3min() {
     if (!__schedule3_timer) button.textContent = 'Lancer le scan dans 3 minutes';
   });
 }
+</script>
+<script>
+(function(){
+  function onCancelClick(ev){
+    var btn = ev.currentTarget;
+    btn.disabled = true;
+    var scheduleId = btn.getAttribute('data-schedule-id');
+    var clientId = btn.getAttribute('data-client-id');
+    var csrf = document.querySelector('input[name="csrf_token"]') ? document.querySelector('input[name="csrf_token"]').value : (window.csrf_token || '');
+    // feedback element
+    var msg = document.createElement('span');
+    msg.style.marginLeft = '8px';
+    msg.style.fontWeight = '600';
+    btn.parentNode.appendChild(msg);
+    msg.textContent = 'Annulation en cours...';
+
+    var fd = new FormData();
+    fd.append('cancel_schedule', '1');
+    fd.append('schedule_id', scheduleId);
+    fd.append('client_id', clientId);
+    fd.append('csrf_token', csrf);
+
+    fetch('client.php?id=' + encodeURIComponent(clientId), {
+      method: 'POST',
+      body: fd,
+      credentials: 'same-origin',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    }).then(function(resp){
+      // si redirect HTML, resp.ok peut être true; on lit le texte
+      return resp.text().then(function(text){
+        // tenter parser JSON si renvoyé
+        try {
+          var j = JSON.parse(text);
+          if (j && j.success) {
+            msg.style.color = 'green';
+            msg.textContent = 'Annulée';
+            // refresh pour mettre à jour l'affichage
+            setTimeout(function(){ location.reload(); }, 600);
+            return;
+          } else {
+            msg.style.color = 'red';
+            msg.textContent = j && j.error ? j.error : 'Erreur annulation';
+            btn.disabled = false;
+            return;
+          }
+        } catch (e) {
+          // non JSON — prob. redirect HTML : on force reload
+          location.reload();
+        }
+      });
+    }).catch(function(err){
+      console.error('cancel_schedule error', err);
+      msg.style.color = 'red';
+      msg.textContent = 'Erreur réseau';
+      btn.disabled = false;
+    });
+  }
+
+  // attacher aux boutons existants (si le DOM est déjà chargé)
+  document.addEventListener('DOMContentLoaded', function(){
+    var btns = document.querySelectorAll('.cancel-schedule-btn');
+    btns.forEach(function(b){ b.addEventListener('click', onCancelClick); });
+  });
+  // au cas où le script est inséré après le DOM, attache aussi tout de suite
+  var btnsNow = document.querySelectorAll('.cancel-schedule-btn');
+  if (btnsNow.length) btnsNow.forEach(function(b){ b.addEventListener('click', onCancelClick); });
+})();
 </script>
 </body>
 </html>
