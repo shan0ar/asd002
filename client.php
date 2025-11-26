@@ -119,23 +119,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['brute_count'])) {
     echo "<div style='color:green;font-weight:bold'>Nombre de tentatives bruteforce enregistré : $brute_count</div>";
 }
 
-// Enregistrement de la planification personnalisée
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['frequency'])) {
-    $freq = $_POST['frequency'];
-    $day = isset($_POST['day_of_week']) ? intval($_POST['day_of_week']) : null;
-    $time = $_POST['time'] ?? '00:00:00';
-    $next_run = (isset($_POST['custom_date']) && $_POST['custom_date'] && isset($_POST['custom_time']) && $_POST['custom_time'])
-        ? ($_POST['custom_date'] . ' ' . $_POST['custom_time'])
-        : null;
-    if ($schedule) {
-        $stmt = $db->prepare("UPDATE scan_schedules SET frequency=?, day_of_week=?, time=?, next_run=? WHERE client_id=?");
-        $stmt->execute([$freq, $day, $time, $next_run, $id]);
-    } else {
-        $stmt = $db->prepare("INSERT INTO scan_schedules (client_id, frequency, day_of_week, time, next_run) VALUES (?, ?, ?, ?, ?)");
-        $stmt->execute([$id, $freq, $day, $time, $next_run]);
+// ---------- Handler pour sauvegarder la planification et créer un job ----------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_schedule2'])) {
+    // sécurité / auth (réutilise la session existante)
+    // CSRF facultatif : vérifier si tu utilises $_SESSION['csrf_token']
+    if (isset($_POST['csrf_token'])) {
+        if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+            echo "<div style='color:red'>Token CSRF invalide.</div>";
+            exit;
+        }
     }
-    header("Location: client.php?id=$id");
-    exit;
+
+    $db = isset($db) ? $db : getDb();
+
+    $freq = $_POST['frequency'] ?? 'weekly'; // weekly, monthly, quarterly, semiannual, annual
+    $day_of_week = isset($_POST['day_of_week']) ? intval($_POST['day_of_week']) : 1; // 1=Mon..7=Sun
+    $time = $_POST['time'] ?? '00:00';
+    $custom_date = $_POST['custom_date'] ?? '';
+    $custom_time = $_POST['custom_time'] ?? '';
+
+    // Calcul du next_run
+    try {
+        if (!empty($custom_date) && !empty($custom_time)) {
+            // format attendu custom_date=YYYY-MM-DD (input type=date), custom_time=HH:MM
+            $next = new DateTime($custom_date . ' ' . $custom_time);
+        } else {
+            // calculer prochaine occurrence du jour de la semaine à l'heure donnée
+            // mapping day_of_week: 1=Lundi ... 7=Dimanche (HTML select devra utiliser 1..7)
+            $now = new DateTime();
+            // time parts
+            list($hh, $mm) = array_map('intval', explode(':', $time . ':00'));
+            $target = clone $now;
+            $current_wd = intval($now->format('N')); // 1..7
+            $diff = ($day_of_week - $current_wd + 7) % 7;
+            // si même jour et time > now-> garde diff = 0 else si même jour and time <= now -> diff = 7
+            $candidate = (clone $now)->setTime($hh, $mm, 0);
+            if ($diff === 0 && $candidate <= $now) $diff = 7;
+            $target->modify("+{$diff} days");
+            $target->setTime($hh, $mm, 0);
+            $next = $target;
+        }
+
+        // Insérer / mettre à jour la table scan_schedules
+        $client_id = isset($_POST['client_id']) ? intval($_POST['client_id']) : (isset($id) ? intval($id) : 0);
+        if ($client_id <= 0) {
+            echo "<div style='color:red'>Client invalide.</div>";
+            exit;
+        }
+
+        // upsert scan_schedules (Postgres)
+        $stmt = $db->prepare("SELECT id FROM scan_schedules WHERE client_id = ?");
+        $stmt->execute([$client_id]);
+        if ($stmt->fetch()) {
+            $upd = $db->prepare("UPDATE scan_schedules SET frequency = ?, day_of_week = ?, time = ?, next_run = ? WHERE client_id = ?");
+            $upd->execute([$freq, $day_of_week, $time, $next->format('Y-m-d H:i:s'), $client_id]);
+        } else {
+            $ins = $db->prepare("INSERT INTO scan_schedules (client_id, frequency, day_of_week, time, next_run) VALUES (?, ?, ?, ?, ?)");
+            $ins->execute([$client_id, $freq, $day_of_week, $time, $next->format('Y-m-d H:i:s')]);
+        }
+
+        // Créer un job persisté dans scan_jobs (scheduled_at = next_run)
+        $params = json_encode(['requested_by' => $_SESSION['user_id'] ?? null, 'via' => 'ui_schedule2']);
+        $jobSql = "INSERT INTO scan_jobs (client_id, params, status, scheduled_at, created_at) VALUES (:client_id, :params, 'pending', :scheduled_at, now()) RETURNING id";
+        $jobStmt = $db->prepare($jobSql);
+        $jobStmt->execute([
+            ':client_id' => $client_id,
+            ':params' => $params,
+            ':scheduled_at' => $next->format('Y-m-d H:i:s')
+        ]);
+        $job_id = $jobStmt->fetchColumn();
+
+        // message et redirection pour confirmation
+        $_SESSION['flash_message'] = "Planification enregistrée — job #{$job_id} programmé pour " . $next->format('d/m/Y H:i');
+        header("Location: client.php?id=" . $client_id);
+        exit;
+    } catch (Exception $e) {
+        error_log("schedule save error: " . $e->getMessage());
+        echo "<div style='color:red'>Erreur serveur lors de l'enregistrement de la planification.</div>";
+        exit;
+    }
 }
 
 // ----------------------
@@ -848,42 +910,66 @@ function formatDateTime($s) {
 </script>
 
 
-    <h2>Planification des scans</h2>
-    <form method="post">
-        <label>Fréquence des scans :
-            <?php
-$freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] : 'weekly';
-?>
-<select name="frequency">
-    <option value="weekly"<?=($freq_val=='weekly'?' selected':'')?>>Hebdomadaire</option>
-    <option value="monthly"<?=($freq_val=='monthly'?' selected':'')?>>Mensuel</option>
-    <option value="quarterly"<?=($freq_val=='quarterly'?' selected':'')?>>Trimestriel</option>
-    <option value="semiannual"<?=($freq_val=='semiannual'?' selected':'')?>>Semestriel</option>
-    <option value="annual"<?=($freq_val=='annual'?' selected':'')?>>Annuel</option>
-</select>
+    <!-- Planification des scans (2) -->
+<form method="post" style="display:inline-block; margin:0;" id="schedule2-form">
+  <input type="hidden" name="save_schedule2" value="1">
+  <input type="hidden" name="client_id" value="<?=htmlspecialchars($id)?>">
+  <input type="hidden" name="csrf_token" value="<?=htmlspecialchars($_SESSION['csrf_token'] ?? '')?>">
 
-        </label>
-        <label>Jour (0=Lundi, 6=Dimanche): <input type="number" name="day_of_week" min="0" max="6" value="<?=htmlspecialchars($schedule['day_of_week']??'')?>"></label>
-        <label>Heure : <input type="time" name="time" value="<?=htmlspecialchars($schedule['time']??'00:00')?>"></label>
-        <label>Date personnalisée : <input type="date" name="custom_date"></label>
-        <label>Heure personnalisée : <input type="time" name="custom_time"></label>
-        <button type="submit">Enregistrer</button>
-    </form>
+  <table style="border-collapse:separate;border-spacing:8px 6px;font-size:0.95em;">
+    <tr>
+      <td><label>Fréquence des scans :</label></td>
+      <td>
+        <select name="frequency" required>
+          <option value="weekly">Hebdomadaire</option>
+          <option value="monthly">Mensuel</option>
+          <option value="quarterly">Trimestriel</option>
+          <option value="semiannual">Semestriel</option>
+          <option value="annual">Annuel</option>
+        </select>
+      </td>
+    </tr>
 
-    <form method="post" style="margin:1em 0;">
-        <label for="brute_count"><b>Nombre de tentatives bruteforce (lignes de la wordlist à tester)</b> :</label>
-        <input type="number" min="1" max="10000" name="brute_count" id="brute_count" value="<?=htmlspecialchars($brute_count)?>" required>
-        <input type="submit" value="Enregistrer">
-    </form>
+    <tr>
+      <td><label>Jour :</label></td>
+      <td>
+        <select name="day_of_week" required>
+          <option value="1">Lundi</option>
+          <option value="2">Mardi</option>
+          <option value="3">Mercredi</option>
+          <option value="4">Jeudi</option>
+          <option value="5">Vendredi</option>
+          <option value="6">Samedi</option>
+          <option value="7">Dimanche</option>
+        </select>
+      </td>
+    </tr>
 
-    <form method="post" action="custom_scan.php">
-        <input type="hidden" name="client_id" value="<?=$id?>">
-        <button type="submit">Personnaliser le prochain scan</button>
-    </form>
-    <form method="post" style="margin-bottom:1em;">
-        <input type="hidden" name="action" value="scan_now">
-        <button type="submit">Lancer un scan maintenant</button>
-    </form>
+    <tr>
+      <td><label>Heure :</label></td>
+      <td><input type="time" name="time" value="00:00" required></td>
+    </tr>
+
+    <tr>
+      <td><label>Date personnalisée :</label></td>
+      <td><input type="date" name="custom_date"></td>
+    </tr>
+
+    <tr>
+      <td><label>Heure personnalisée :</label></td>
+      <td><input type="time" name="custom_time"></td>
+    </tr>
+
+    <tr>
+      <td></td>
+      <td>
+        <button type="submit" title="Enregistrer la planification" style="font-size:0.95em;padding:6px 10px;">
+          💾 Enregistrer
+        </button>
+      </td>
+    </tr>
+  </table>
+</form>
     <!-- === Inserer ici: bouton "Lancer le scan dans 3 minutes" === -->
     <div id="scan-in-3min-container" style="display:inline-block; margin-left:8px;">
       <button id="btn-scan-in-3min" class="asset-add-box" type="button"
