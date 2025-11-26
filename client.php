@@ -167,7 +167,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_schedule'])) {
         $db = isset($db) ? $db : getDb();
 
         // UPDATE avec RETURNING pour vérifier
-        $stmt = $db->prepare("UPDATE scan_schedules SET active = false, updated_at = now() WHERE id = ? RETURNING id, active");
+        $stmt = $db->prepare("UPDATE scan_schedules SET active = false WHERE id = ? RETURNING id, active");
         $stmt->execute([$sched_id]);
         $res = $stmt->fetch(PDO::FETCH_ASSOC);
 
