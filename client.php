@@ -137,58 +137,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['frequency'])) {
     header("Location: client.php?id=$id");
     exit;
 }
+
 // ----------------------
-// Handler pour planifier un scan (création persistante d'un job dans scan_jobs)
-// Insert BEFORE the existing "scan_now" handler (avant la ligne qui commence par "if (... 'scan_now')")
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'schedule_scan') {
-    // protéger / valider
-    $client_to_schedule = isset($_POST['client_id']) ? intval($_POST['client_id']) : intval($id);
+// Debug/robust handler pour planifier un scan (remplace temporairement l'ancien handler)
+// PLACE THIS BLOCK BEFORE ANY HTML OUTPUT (i.e. where the previous schedule_scan handler was)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'schedule_scan')) {
+    // Début bufferiser toute sortie accidentelle (warnings/echos)
+    ob_start();
+    header('Content-Type: application/json; charset=utf-8');
+
+    // s'assurer que $db est disponible
+    if (!isset($db) || !$db) {
+        try { $db = getDb(); } catch (Exception $e) { /* handled below */ }
+    }
+
+    $client_to_schedule = isset($_POST['client_id']) ? intval($_POST['client_id']) : (isset($id) ? intval($id) : 0);
     $delay_seconds = isset($_POST['delay_seconds']) ? intval($_POST['delay_seconds']) : 180;
+    if ($delay_seconds <= 0) $delay_seconds = 180;
+
     if ($client_to_schedule <= 0) {
-        // Si la requête est AJAX, renvoyer JSON, sinon afficher message
-        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false || isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['success'=>false, 'error'=>'client_id invalide']);
-            exit;
-        } else {
-            echo "<div style='color:red;font-weight:bold'>Client invalide pour planification du scan.</div>";
+        // vider le buffer et renvoyer JSON
+        ob_end_clean();
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'client_id invalide']);
+        exit;
+    }
+
+    // CSRF check minimal (si vous avez un token dans la session)
+    if (isset($_POST['csrf_token']) && isset($_SESSION['csrf_token'])) {
+        if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+            ob_end_clean();
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'Token CSRF invalide']);
             exit;
         }
     }
 
     try {
-        // On insère dans scan_jobs la commande planifiée
-        // scheduled_at = now() + delay_seconds
-        // Utilise timestamptz pour timezone-aware (Postgres)
+        if (!isset($db) || !$db) throw new Exception('DB non initialisée');
+
         $insert_sql = "INSERT INTO scan_jobs (client_id, params, status, scheduled_at, created_at)
                        VALUES (:client_id, :params, 'pending', now() + (:delay || ' seconds')::interval, now())
                        RETURNING id";
         $params = json_encode(['requested_by' => $_SESSION['user_id'] ?? null], JSON_UNESCAPED_UNICODE);
         $stmt = $db->prepare($insert_sql);
-        $stmt->execute([':client_id' => $client_to_schedule, ':params' => $params, ':delay' => $delay_seconds]);
+        $stmt->execute([':client_id' => $client_to_schedule, ':params' => $params, ':delay' => (string)$delay_seconds]);
         $job_id = $stmt->fetchColumn();
 
-        // Si AJAX -> JSON ; sinon redirection vers client avec param pour afficher message
-        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false || isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['success' => true, 'job_id' => $job_id, 'message' => 'Scan programmé en base']);
-            exit;
-        } else {
-            header("Location: client.php?id={$id}&scheduled={$job_id}");
-            exit;
-        }
+        // tout va bien -> vider le buffer et renvoyer JSON
+        ob_end_clean();
+        echo json_encode(['success' => true, 'job_id' => $job_id, 'message' => 'Scan programmé en base']);
+        exit;
     } catch (Exception $e) {
-        error_log("Erreur planification scan: " . $e->getMessage());
-        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false || isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
-            exit;
-        } else {
-            echo "<div style='color:red;font-weight:bold'>Erreur lors de la programmation du scan: " . htmlspecialchars($e->getMessage()) . "</div>";
-            exit;
-        }
+        // capture toute sortie accidentelle
+        $raw_output = ob_get_clean();
+        $log_file = '/var/log/asd002/schedule_scan_debug.log';
+        $msg = date('c') . " - schedule_scan error: " . $e->getMessage() . "\nOUTPUT:\n" . $raw_output . "\n\n";
+        @file_put_contents($log_file, $msg, FILE_APPEND | LOCK_EX);
+
+        // renvoyer un JSON d'erreur (sans inclure le HTML)
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Erreur serveur lors de la programmation (voir logs)']);
+        exit;
     }
 }
+// ----------------------
 //Lancer un scan immédiat (corrigé pour prendre en compte les outils cochés)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'scan_now') {
     $stmt = $db->prepare("INSERT INTO scans (client_id, scan_date, scheduled, status) VALUES (?, now(), false, 'running') RETURNING id");
@@ -874,7 +887,8 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
     <!-- === Inserer ici: bouton "Lancer le scan dans 3 minutes" === -->
     <div id="scan-in-3min-container" style="display:inline-block; margin-left:8px;">
       <button id="btn-scan-in-3min" class="asset-add-box" type="button"
-              style="display:inline-block; padding:8px 12px; font-size:0.95em;">
+              style="display:inline-block; padding:8px 12px; font-size:0.95em;"
+              onclick="startSchedule3min();">
         Lancer le scan dans 3 minutes
       </button>
 
@@ -990,42 +1004,38 @@ $freq_val = $schedule && isset($schedule['frequency']) ? $schedule['frequency'] 
     msgEl.textContent = 'Programmation en cours…';
 
     // POST vers la même page (client.php) — le server renvoie JSON { success: true, job_id: ... }
-    fetch('client.php', {
+    fetch('schedule_scan.php', {
       method: 'POST',
       body: fd,
       credentials: 'same-origin',
       headers: { 'X-Requested-With': 'XMLHttpRequest' }
     })
-    .then(resp => {
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      return resp.json();
-    })
-    .then(json => {
-      console.log('schedule_scan response:', json);
-      if (json && json.success) {
-        // starter le countdown pour l'UX
-        msgEl.style.color = 'green';
-        msgEl.textContent = 'Scan programmé (job #' + (json.job_id || '?') + ') — lancement dans 3 min.';
-        startCountdown();
-      } else {
-        const err = (json && json.error) ? json.error : 'Erreur lors de la programmation';
-        msgEl.style.color = 'red';
-        msgEl.textContent = err;
-        console.error('schedule_scan error:', json);
-      }
-    })
-    .catch(err => {
-      console.error(err);
+    // remplace la partie .then(resp => resp.json())... par ceci
+.then(resp => {
+  console.log('schedule_scan HTTP status:', resp.status, 'statusText:', resp.statusText);
+  return resp.text();
+})
+.then(text => {
+  console.log('RAW schedule_scan response:', text);
+  try {
+    const json = JSON.parse(text);
+    console.log('PARSED schedule_scan JSON:', json);
+    if (json && json.success) {
+      msgEl.style.color = 'green';
+      msgEl.textContent = 'Scan programmé (job #' + (json.job_id || '?') + ') — lancement dans 3 min.';
+      startCountdown();
+    } else {
+      const err = (json && json.error) ? json.error : 'Erreur lors de la programmation';
       msgEl.style.color = 'red';
-      msgEl.textContent = 'Erreur réseau / serveur.';
-    })
-    .finally(() => {
-      button.disabled = false;
-      // si le countdown a démarré, startCountdown a déjà mis le texte,
-      // sinon on remet le texte d'origine
-      if (!timer) button.textContent = originalText;
-    });
-  });
+      msgEl.textContent = err;
+      console.error('schedule_scan error (parsed):', json);
+    }
+  } catch (e) {
+    console.error('schedule_scan: invalid JSON response', e);
+    msgEl.style.color = 'red';
+    msgEl.textContent = 'Réponse serveur invalide (voir console).';
+  }
+})
 
   // cleanup si l'utilisateur ferme la page : on ne tente rien, le job est en base
   window.addEventListener('beforeunload', function () {
@@ -1446,5 +1456,128 @@ if (isset($_GET['year']) && isset($_GET['month']) && isset($_GET['day'])) {
     color: #fff;
 }
 </style>
+<script>
+/* Fonction globale invoquée depuis onclick du bouton.
+   Ne supprime pas l'IIFE existante, mais cette fonction garantit que
+   le bouton fonctionne même si addEventListener n'a pas été attaché.
+*/
+var __schedule3_timer = null;
+var __schedule3_remaining = 180000; // 3 min en ms
+function formatMs(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+  const s = String(totalSec % 60).padStart(2, '0');
+  return m + ':' + s;
+}
+function startCountdownUI(button, msgEl) {
+  if (__schedule3_timer) return;
+  __schedule3_remaining = 180000;
+  button.classList.add('running');
+  button.textContent = 'Scan dans ' + formatMs(__schedule3_remaining);
+  __schedule3_timer = setInterval(function() {
+    __schedule3_remaining -= 1000;
+    if (__schedule3_remaining <= 0) {
+      clearInterval(__schedule3_timer);
+      __schedule3_timer = null;
+      button.classList.remove('running');
+      button.textContent = 'Lancer le scan dans 3 minutes';
+      msgEl.style.color = 'green';
+      msgEl.textContent = 'Le job est enregistré en base — le worker s’en chargera.';
+    } else {
+      button.textContent = 'Scan dans ' + formatMs(__schedule3_remaining);
+    }
+  }, 1000);
+}
+
+function startSchedule3min() {
+  var button = document.getElementById('btn-scan-in-3min');
+  var formClient = document.getElementById('form-scan-client-id');
+  if (!button || !formClient) {
+    alert('Erreur interne: éléments manquants.');
+    return;
+  }
+  // message element (créé s'il n'existe pas)
+  var msgEl = document.getElementById('scan-in-3min-msg');
+  if (!msgEl) {
+    msgEl = document.createElement('span');
+    msgEl.id = 'scan-in-3min-msg';
+    msgEl.style.marginLeft = '10px';
+    msgEl.style.fontWeight = '600';
+    button.parentNode.insertBefore(msgEl, button.nextSibling);
+  }
+
+  // UX toggle: si countdown déjà en cours => annule
+  if (__schedule3_timer) {
+    clearInterval(__schedule3_timer);
+    __schedule3_timer = null;
+    button.classList.remove('running');
+    button.textContent = 'Lancer le scan dans 3 minutes';
+    msgEl.textContent = '';
+    return;
+  }
+
+  var client_id = formClient.value || (new URLSearchParams(window.location.search)).get('id');
+  if (!client_id) {
+    alert('Client introuvable');
+    return;
+  }
+
+  // Prépare la requête
+  var fd = new FormData();
+  fd.append('action', 'schedule_scan');
+  fd.append('client_id', String(client_id));
+  fd.append('delay_seconds', String(180));
+
+  // Si token CSRF présent sur la page, l'ajouter
+  var csrf = document.querySelector('input[name="csrf_token"]');
+  if (csrf && csrf.value) fd.append('csrf_token', csrf.value);
+
+  button.disabled = true;
+  button.textContent = 'Programmation…';
+  msgEl.style.color = '#333';
+  msgEl.textContent = 'Programmation en cours…';
+
+  fetch('schedule_scan.php', {
+    method: 'POST',
+    body: fd,
+    credentials: 'same-origin',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  })
+  .then(function(resp) {
+    console.log('schedule_scan HTTP status:', resp.status, resp.statusText);
+    return resp.text();
+  })
+  .then(function(text) {
+    console.log('RAW schedule_scan response:', text);
+    try {
+      var json = JSON.parse(text);
+      console.log('PARSED schedule_scan JSON:', json);
+      if (json && json.success) {
+        msgEl.style.color = 'green';
+        msgEl.textContent = 'Scan programmé (job #' + (json.job_id || '?') + ') — lancement dans 3 min.';
+        startCountdownUI(button, msgEl);
+      } else {
+        var err = (json && json.error) ? json.error : 'Erreur lors de la programmation';
+        msgEl.style.color = 'red';
+        msgEl.textContent = err;
+        console.error('schedule_scan error (parsed):', json);
+      }
+    } catch (e) {
+      console.error('schedule_scan: invalid JSON response', e, text);
+      msgEl.style.color = 'red';
+      msgEl.textContent = 'Réponse serveur invalide (voir console).';
+    }
+  })
+  .catch(function(err) {
+    console.error(err);
+    msgEl.style.color = 'red';
+    msgEl.textContent = 'Erreur réseau / serveur.';
+  })
+  .finally(function() {
+    button.disabled = false;
+    if (!__schedule3_timer) button.textContent = 'Lancer le scan dans 3 minutes';
+  });
+}
+</script>
 </body>
 </html>
